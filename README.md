@@ -11,4 +11,13 @@ npm install
 npm test
 ```
 
+데모 화면(에이전트 없이 장면 5개를 돈다):
+
+```bash
+npm run build
+python -m http.server 47918 --bind 127.0.0.1 --directory packages/ui/dist/web
+```
+
+브라우저에서 `http://127.0.0.1:47918/?demo`를 연다. `?demo=6000`은 6초 시점에 멈춘다.
+
 Node.js 20 이상이 필요하다. 라이선스는 MIT다.

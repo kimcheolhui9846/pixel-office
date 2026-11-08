@@ -48,3 +48,12 @@
 - idle은 `forgetAfterMs`(기본 30분) 뒤에 목록에서 지운다.
 - 화면 전체 장면(`scene`)의 우선순위: 사람이 필요한 상태(alert, waiting) > 가장 최근에 일을 시작한 에이전트(CODEX_BUILDING 또는 CLAUDE_RUNNING) > SUCCESS > IDLE.
 - 프롬프트의 `CLAUDE_ALERT`는 Codex의 오류에도 쓴다. 이때 `focus`가 `codex`라서 UI가 Codex 책상에 경고를 그린다.
+
+## 5. UI 뼈대 (2단계, `packages/ui`)
+
+- **번들러 없음.** TypeScript를 ES 모듈로 컴파일하고, `scripts/assemble.mjs`가 `dist/web/`에 `index.html`, UI 모듈, core 모듈을 모은다. 페이지는 import map으로 `@pixel-office/core`를 찾는다. VS Code 웹뷰와 Orca 브라우저가 모두 Chromium이라 같은 파일을 쓴다. esbuild는 설치할 때 스크립트(postinstall)를 실행해서 쓰지 않았다.
+- **그리기는 순수 함수다.** `art(scene, {frame, reducedMotion, connected})`가 사각형과 글자 목록을 돌려주고, `main.ts`가 그것을 캔버스(160×96 논리 픽셀, 정수 배율)에 칠한다. 외부 이미지 에셋은 없다.
+- **성능:** 10fps 고정 루프, 탭이 숨으면 멈춤, 그림이 같으면 다시 칠하지 않음. `prefers-reduced-motion`이면 애니메이션을 0프레임에 고정한다.
+- **데모:** `?demo`는 20초 반복 시나리오로 장면 5개를 돈다. `?demo=6000`은 6초 시점에 고정한다(스크린숏용). `&`를 쓰지 않는 이유: Windows에서 `orca.cmd`가 `cmd.exe`를 거치면서 URL의 `&` 뒤를 잘랐다.
+- 실제 에이전트 없이 서버로 가짜 이벤트를 보내는 `pixel-office simulate`는 서버가 생기는 3단계에서 만든다.
+- 스크린숏: `docs/screenshots/step2-*.png` (Orca 1.4.253 내장 브라우저).
