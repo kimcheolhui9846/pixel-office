@@ -30,3 +30,21 @@
 - Orca가 띄운 Codex가 세션 로그를 어디에 쓰는지(Orca 전용 `CODEX_HOME`).
 - Orca 내장 브라우저에서 실제 WebSocket 연결(생성자는 있음을 확인).
 - Codex 훅에서 셸 명령의 종료 코드를 얻을 수 있는지.
+
+## 4. 상태 머신 (1단계, `packages/core/src/state.ts`)
+
+- 세션마다 상태를 따로 둔다. 키는 `에이전트:세션 id`라서 두 에이전트의 id가 같아도 섞이지 않는다.
+- `reduce(state, event)`는 순수 함수다. 시간은 이벤트의 `ts`로만 흐르고, 서버가 주기적으로 `tick` 이벤트를 보낸다.
+
+| 이벤트 | 세션 상태 |
+|---|---|
+| `start`, `tool_start`, `tool_end`, `fs_burst` | working |
+| `waiting` (권한 요청 등) | waiting. 사람이 답해야 하므로 시간이 지나도 풀리지 않는다 |
+| `error` | alert |
+| `success`, `stop` | success |
+
+- success와 alert는 `holdMs`(기본 4초) 뒤에 idle로 돌아간다.
+- working은 `idleAfterMs`(기본 30초) 동안 이벤트가 없으면 idle이 된다.
+- idle은 `forgetAfterMs`(기본 30분) 뒤에 목록에서 지운다.
+- 화면 전체 장면(`scene`)의 우선순위: 사람이 필요한 상태(alert, waiting) > 가장 최근에 일을 시작한 에이전트(CODEX_BUILDING 또는 CLAUDE_RUNNING) > SUCCESS > IDLE.
+- 프롬프트의 `CLAUDE_ALERT`는 Codex의 오류에도 쓴다. 이때 `focus`가 `codex`라서 UI가 Codex 책상에 경고를 그린다.
