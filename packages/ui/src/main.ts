@@ -1,12 +1,16 @@
 /**
  * The page: draws the office at a fixed low frame rate (10 fps), stops while the tab is
- * hidden, and repaints only when the picture changes. Step 2 has only the demo source
- * (`?demo`); the server connection comes in step 3.
+ * hidden, and repaints only when the picture changes.
+ *
+ * Sources: `?demo` plays the shared demo script with no server. Otherwise the page reads
+ * the token the server put in a meta tag and follows the server's WebSocket (`/ws`),
+ * reconnecting with exponential backoff and showing the "not connected" banner meanwhile.
  */
-import type { Scene } from "@pixel-office/core";
+import { demoScene, type Scene } from "@pixel-office/core";
 
 import { art, HEIGHT, type Op, WIDTH } from "./art.js";
-import { demoScene } from "./demo.js";
+import { backoffMs } from "./backoff.js";
+import { readToken, TOKEN_META } from "./token.js";
 
 const FPS = 10;
 const IDLE_SCENE: Scene = { mode: "IDLE", focus: null, desks: { codex: "idle", claude: "idle" } };
@@ -21,6 +25,9 @@ const demo = params.has("demo");
 const at = params.get("demo");
 const frozenAt = at ? Number(at) : undefined;
 const started = performance.now();
+
+let live: Scene = IDLE_SCENE;
+let connected = false;
 
 let frame = 0;
 let last = "";
@@ -49,8 +56,8 @@ function paint(ops: Op[]) {
 
 function step() {
   const elapsed = frozenAt ?? performance.now() - started;
-  const current = demo ? demoScene(elapsed) : IDLE_SCENE;
-  const ops = art(current, { frame, reducedMotion: motion.matches, connected: demo });
+  const current = demo ? demoScene(elapsed) : live;
+  const ops = art(current, { frame, reducedMotion: motion.matches, connected: demo || connected });
   const key = JSON.stringify(ops);
   if (key !== last) {
     paint(ops);
@@ -71,6 +78,61 @@ function stop() {
   if (timer !== undefined) {
     window.clearInterval(timer);
     timer = undefined;
+  }
+}
+
+function isScene(value: unknown): value is Scene {
+  const v = value as Scene | null;
+  return typeof v === "object" && v !== null && typeof v.mode === "string" && typeof v.desks === "object";
+}
+
+/**
+ * Follows the server's WebSocket. The server only pushes; the page never sends. When the
+ * socket closes (an error is always followed by a close), it retries after a growing delay.
+ */
+function follow(first: string) {
+  let token = first;
+  let attempt = 0;
+  // the server may have restarted with a new token: read the current one first
+  const reopen = async () => {
+    try {
+      const response = await fetch("/", { cache: "no-store" });
+      token = readToken(await response.text()) ?? token;
+    } catch {
+      // server still down: try the socket anyway, it closes and we come back here
+    }
+    open();
+  };
+  const open = () => {
+    const socket = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
+    socket.onmessage = (message: MessageEvent) => {
+      try {
+        const data = JSON.parse(String(message.data)) as { scene?: unknown };
+        if (isScene(data.scene)) {
+          live = data.scene;
+          connected = true;
+          attempt = 0; // a good message resets the backoff
+        }
+      } catch {
+        // a malformed message is ignored; the next one replaces the scene
+      }
+    };
+    socket.onerror = () => socket.close();
+    socket.onclose = () => {
+      connected = false;
+      window.setTimeout(() => void reopen(), backoffMs(attempt));
+      attempt += 1;
+    };
+  };
+  open();
+}
+
+if (!demo) {
+  const token = document.querySelector<HTMLMetaElement>(`meta[name="${TOKEN_META}"]`)?.content;
+  // Without a token (the page was not served by our server) there is nothing to follow,
+  // and the banner stays up.
+  if (token) {
+    follow(token);
   }
 }
 
