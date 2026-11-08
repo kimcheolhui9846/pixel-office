@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import type { Scene, SceneMode } from "@pixel-office/core";
+import { DEMO_LOOP_MS, demoScene, type Scene, type SceneMode } from "@pixel-office/core";
 
 import { art, HEIGHT, type Op, WIDTH } from "../src/art.js";
-import { DEMO_LOOP_MS, demoScene } from "../src/demo.js";
 
 const base = { frame: 0, reducedMotion: false, connected: true };
 

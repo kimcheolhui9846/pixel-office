@@ -1,0 +1,18 @@
+{
+  "name": "@pixel-office/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "pixel-office": "dist/src/cli.js"
+  },
+  "dependencies": {
+    "@pixel-office/core": "0.0.0",
+    "@pixel-office/ui": "0.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node --test \"dist/test/**/*.test.js\""
+  }
+}
