@@ -3,7 +3,10 @@
  * everything else (prompt text, commands, tool output) is dropped here and never reaches
  * the state, the WebSocket or the log.
  */
+import { LIMITS } from "../limits.js";
 import type { AgentEvent, AgentEventType, AgentKind } from "../state.js";
+
+export { LIMITS };
 
 export const AGENTS: readonly AgentKind[] = ["codex", "claude"];
 export const EVENT_TYPES: readonly AgentEventType[] = [
@@ -16,8 +19,6 @@ export const EVENT_TYPES: readonly AgentEventType[] = [
   "stop",
   "fs_burst",
 ];
-
-export const LIMITS = { sessionId: 200, cwd: 1024, detail: 40 } as const;
 
 export type Checked = { ok: true; event: AgentEvent } | { ok: false; reason: string };
 
