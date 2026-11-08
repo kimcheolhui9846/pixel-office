@@ -1,0 +1,21 @@
+{
+  "name": "pixel-office",
+  "private": true,
+  "description": "Codex와 Claude Code의 작업 상태를 2D 픽셀 사무실로 보여 주는 도구 (VS Code, Orca)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
+}
