@@ -7,6 +7,7 @@
  * read here at most to pick a label and are never copied into the event.
  */
 import { LIMITS } from "./limits.js";
+import { shortLabel, text } from "./fields.js";
 import type { AgentEvent, AgentEventType } from "./state.js";
 
 /** The hook events `pixel-office init` registers; everything else maps to null. */
@@ -237,22 +238,4 @@ function matchesTestRunner(t: string[]): boolean {
     return args.some((a) => a === "test" || a.endsWith(":test"));
   }
   return false;
-}
-
-/** A string of 1..max characters without control characters, else undefined. */
-function text(value: unknown, max: number): string | undefined {
-  return typeof value === "string" && value.length >= 1 && value.length <= max && !CONTROL.test(value)
-    ? value
-    : undefined;
-}
-
-const CONTROL = /[\u0000-\u001f\u007f]/;
-
-/** Control characters removed and cut to the server's detail limit without splitting a pair. */
-function shortLabel(value: string): string {
-  let label = value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, LIMITS.detail);
-  if (/[\ud800-\udbff]$/.test(label)) {
-    label = label.slice(0, -1);
-  }
-  return label;
 }

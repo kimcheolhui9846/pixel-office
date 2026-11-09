@@ -206,3 +206,26 @@ describe("hook.js always ends silently with exit 0", () => {
     assert.equal(existsSync(home), false);
   });
 });
+
+describe("hook.js codex", () => {
+  test("Codex payloads arrive as codex events", async () => {
+    const home = join(root, "codex-real");
+    const server = await startServer({ port: 0, home });
+    try {
+      const codex = (fields: Record<string, unknown>) =>
+        JSON.stringify({ session_id: "cx-1", cwd: "D:\\repo", transcript_path: null, model: "m", turn_id: "t", ...fields });
+      const run = (fields: Record<string, unknown>) => runHook(codex(fields), home, {}, ["codex"]);
+      assertSilent(await run({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" } }));
+      assert.equal(server.state().sessions["codex:cx-1"]?.status, "working");
+      assertSilent(await run({ hook_event_name: "PermissionRequest", tool_name: "Bash" }));
+      assert.equal(server.state().sessions["codex:cx-1"]?.status, "waiting");
+      // a completed model request is not sent
+      assertSilent(await run({ hook_event_name: "PostModelRequest", status: "completed" }));
+      assertSilent(await run({ hook_event_name: "Stop", last_assistant_message: "x" }));
+      assert.equal(server.state().sessions["codex:cx-1"]?.status, "success");
+      assert.equal(server.stats().accepted, 3);
+    } finally {
+      await server.close();
+    }
+  });
+});

@@ -4,8 +4,8 @@
  *
  *   pixel-office start [--port N]                   run the server in the foreground
  *   pixel-office simulate [--loops N] [--speed X]   post the demo events to a running server
- *   pixel-office init [--dry-run] [--yes] [--windows-home P]   add our hooks to Claude Code
- *   pixel-office uninit [--dry-run] [--yes]         remove them again
+ *   pixel-office init [--agent A] [--dry-run] [--yes] [--windows-home P]   add our hooks
+ *   pixel-office uninit [--agent A] [--dry-run] [--yes]   remove them again
  *
  * Messages for the user are Korean; code comments are English.
  */
@@ -31,10 +31,12 @@ import { defaultIo, runInit } from "./init.js";
 const USAGE = `사용법:
   pixel-office start [--port N]                     서버를 실행합니다 (기본 포트 ${DEFAULT_PORT}, Ctrl+C로 종료)
   pixel-office simulate [--loops N] [--speed X]     실행 중인 서버에 데모 이벤트를 보냅니다 (기본 1회, 1배속)
-  pixel-office init [--dry-run] [--yes]             Claude Code 사용자 설정(~/.claude/settings.json)에 훅을 넣습니다
+  pixel-office init [--dry-run] [--yes]             에이전트 사용자 설정에 훅을 넣습니다
+                                                    Claude Code: ~/.claude/settings.json, Codex: ~/.codex/hooks.json
                                                     바꿀 내용을 diff로 먼저 보여 주고, 확인한 뒤 백업하고 씁니다
+      --agent <claude|codex|both>                   대상 에이전트 (기본 both, Codex 폴더가 없으면 Codex는 건너뜀)
       --windows-home <경로>                         WSL에서: Windows 사용자 폴더 (예: /mnt/c/Users/이름)
-  pixel-office uninit [--dry-run] [--yes]           init이 넣은 훅만 지웁니다
+  pixel-office uninit [--dry-run] [--yes]           init이 넣은 훅만 지웁니다 (--agent도 씀)
 
 환경 변수:
   PIXEL_OFFICE_HOME   server.json과 백업을 둘 폴더 (기본 ~/.pixel-office)
@@ -206,15 +208,21 @@ async function init(mode: "init" | "uninit", args: string[]): Promise<number> {
       "dry-run": { type: "boolean" },
       yes: { type: "boolean", short: "y" },
       "windows-home": { type: "string" },
+      agent: { type: "string" },
     },
     strict: true,
   });
+  const agent = values.agent ?? "both";
+  if (agent !== "claude" && agent !== "codex" && agent !== "both") {
+    throw new UsageError(`--agent 값은 claude, codex, both 중 하나여야 합니다: ${agent}`);
+  }
   const hookPath = join(dirname(fileURLToPath(import.meta.url)), "hook.js");
   return runInit(
     mode,
     {
       dryRun: values["dry-run"] === true,
       yes: values.yes === true,
+      agent,
       ...(values["windows-home"] !== undefined ? { windowsHome: values["windows-home"] } : {}),
     },
     defaultIo(hookPath),

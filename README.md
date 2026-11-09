@@ -30,20 +30,26 @@ npx pixel-office simulate --loops 1 # 다른 터미널에서: 데모 이벤트�
 
 `start`가 출력한 `http://127.0.0.1:47821/`을 브라우저로 연다. 서버 정보(`server.json`)는 `~/.pixel-office`에 쓰며, `PIXEL_OFFICE_HOME`으로 폴더를 바꿀 수 있다. 보안 설계는 `docs/DESIGN.md` 6절에 있다.
 
-### Claude Code 연결 (`init`, `uninit`)
+### Claude Code와 Codex 연결 (`init`, `uninit`)
 
 ```bash
 npm run build
 npx pixel-office init --dry-run   # 바뀔 내용을 diff로만 본다
-npx pixel-office init             # diff를 보여 주고 "적용할까요? (y/N)"를 묻는다. --yes면 묻지 않는다
+npx pixel-office init             # 파일마다 diff를 보여 주고 "적용할까요? (y/N)"를 묻는다. --yes면 묻지 않는다
 npx pixel-office uninit           # init이 넣은 훅만 지운다
+# --agent claude|codex|both (기본 both): 한쪽만 고칠 때
 ```
 
-> **주의:** `init`은 Claude Code 사용자 설정 `~/.claude/settings.json`을 고친다(`CLAUDE_CONFIG_DIR`이 있으면 그 폴더의 `settings.json`). 고치기 전에 diff를 보여 주고, 확인을 받은 뒤, 원래 파일을 `~/.pixel-office/backups/<시각>/claude-settings.json`에 백업한다. 다른 훅(Orca, skill kit 등)과 다른 설정은 그대로 둔다. 터미널이 아닌 곳에서 `--yes` 없이 실행하면 아무것도 쓰지 않고 종료 코드 64로 끝난다.
+> **주의:** `init`은 사용자 설정 파일을 고친다.
+> - Claude Code: `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR`이 있으면 그 폴더의 `settings.json`)
+> - Codex: `~/.codex/hooks.json` (`CODEX_HOME`이 있으면 그 폴더). `--agent both`에서는 Codex 폴더가 없으면 건너뛴다.
+>
+> 고치기 전에 diff를 보여 주고, 확인을 받은 뒤, 원래 파일을 `~/.pixel-office/backups/<시각>/`(`claude-settings.json`, `codex-hooks.json`)에 백업한다. 다른 훅(Orca, skill kit 등)과 다른 설정은 그대로 둔다. 터미널이 아닌 곳에서 `--yes` 없이 실행하면 아무것도 쓰지 않고 종료 코드 64로 끝난다.
 
-- 훅은 서버가 꺼져 있어도 조용히 끝난다(0.5초 제한, 출력 없음). 백그라운드(`async`)로 돌아서 Claude를 기다리게 하지 않는다.
+- **Codex는 새 훅을 신뢰해야 실행한다.** `init` 뒤에 Codex에서 `/hooks`를 열어 Pixel Office 훅을 신뢰한다. 저장소를 옮겨 명령이 바뀌면 다시 신뢰해야 한다.
+- 훅은 서버가 꺼져 있어도 조용히 끝난다(0.5초 제한, 출력 없음). Claude Code 훅은 백그라운드(`async`)로 돈다. Codex 훅은 동기로 돌며(이벤트마다 보통 수십 ms), Windows에서는 `~/.pixel-office/pixel-office-codex-hook.cmd` 래퍼를 거친다. 래퍼 경로에 공백이 있으면 `PIXEL_OFFICE_HOME`을 공백 없는 폴더로 지정한다.
 - 저장소를 옮기거나 node를 바꾸면 `init`을 다시 실행한다. 예전 항목이 새 항목으로 바뀐다.
 - WSL 안에서 실행하면 훅이 Windows 쪽 `.pixel-office` 폴더를 읽도록 설정한다. 자동으로 찾지 못하면 `--windows-home /mnt/c/Users/<이름>`을 준다. WSL은 mirrored networking이어야 한다.
-- 자세한 내용은 `docs/DESIGN.md` 7절에 있다.
+- 자세한 내용은 `docs/DESIGN.md` 7절(Claude Code)과 8절(Codex)에 있다.
 
 Node.js 20 이상이 필요하다. 라이선스는 MIT다.

@@ -1,11 +1,12 @@
 /**
- * Claude Code hook runner (step 4): `node <abs>/hook.js claude`, registered by
- * `pixel-office init`.
+ * Hook runner for Claude Code (step 4) and Codex (step 5): `node <abs>/hook.js claude` or
+ * `... codex`, registered by `pixel-office init`.
  *
- * Reads the hook payload from stdin, maps it with `fromClaudeHook`, and posts the event to
- * the server named in `server.json`. Whatever happens it exits 0 and writes nothing to
- * stdout or stderr: on UserPromptSubmit and SessionStart Claude Code adds hook stdout to
- * Claude's context, and a non-zero exit is reported as a hook error. The whole run has a
+ * Reads the hook payload from stdin, maps it with `fromClaudeHook` or `fromCodexHook`, and
+ * posts the event to the server named in `server.json`. Whatever happens it exits 0 and
+ * writes nothing to stdout or stderr: both agents add UserPromptSubmit stdout to the model's
+ * context, Codex treats plain text from Stop as invalid, and a non-zero exit is reported as
+ * a hook error (exit 2 even blocks the action). The whole run has a
  * 500 ms deadline.
  *
  * Only Node built-ins and two small core modules are loaded (no `ws`), to start fast. The
@@ -127,7 +128,7 @@ async function main(): Promise<void> {
   const { homeDir, readServerInfo, TOKEN_HEADER } = await import("@pixel-office/core/home");
   const home = homeDir();
   debugHome = home;
-  if (agent !== "claude") {
+  if (agent !== "claude" && agent !== "codex") {
     note(`unknown agent ${JSON.stringify(agent ?? "")}`);
     return;
   }
@@ -145,8 +146,8 @@ async function main(): Promise<void> {
   const name = (payload as { hook_event_name?: unknown } | null)?.hook_event_name;
   // only a plain event name goes to the debug log, never other payload text
   const hookEvent = typeof name === "string" && /^[A-Za-z]{1,40}$/.test(name) ? name : "?";
-  const { fromClaudeHook } = await import("@pixel-office/core");
-  const event = fromClaudeHook(payload);
+  const { fromClaudeHook, fromCodexHook } = await import("@pixel-office/core");
+  const event = agent === "claude" ? fromClaudeHook(payload) : fromCodexHook(payload);
   if (event === null) {
     note(`${hookEvent} -> ignored`);
     return;
