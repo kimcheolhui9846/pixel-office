@@ -309,7 +309,7 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 
 - WSL 안에서 실행한 에이전트(`/mnt/...`, `/home/...`)가 Windows에서 연 사무실과 맞는지. 테스트는 정규화 함수로만 했다.
 - 같은 폴더에서 같은 에이전트 세션이 두 개일 때의 표시. 지금은 더 급한 상태(문제 발생 > 응답 대기 > 작업 중 > 완료)를 책상에 그린다.
-- Orca가 worktree마다 자동으로 탭을 여는 부분(8단계). 지금은 `pixel-office url`로 주소를 만들어 직접 연다. VS Code는 10절의 확장이 연다.
+- (해결) VS Code는 10절의 확장이, Orca는 11절의 훅이 사무실을 자동으로 연다.
 
 ## 10. VS Code 확장 (7단계, `packages/vscode`)
 
@@ -342,3 +342,34 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 - 원격(WSL, SSH) 창. 경로 넘기기와 `asExternalUri`는 코드만 있다.
 - `.vsix` 패키지와 마켓플레이스 배포. 지금 확장은 저장소의 `node_modules`(워크스페이스 링크)에서 core와 cli를 찾으므로 저장소 안에서만 돈다. 패키지로 만들려면 core, ui, cli와 `ws`를 확장 폴더 안에 넣어야 한다.
 - (참고) Orca는 VS Code 확장을 싣지 않는다(1절). Orca는 8단계에서 내장 브라우저 탭으로 연다.
+
+## 11. Orca 자동 열기 (8단계)
+
+### 11.1 방식 고르기
+
+- Orca는 VS Code 확장을 싣지 않는다(1절).
+- Orca 플러그인 워커는 작업 공간과 에이전트 이벤트를 받는다. 하지만 호스트 API에 브라우저 탭을 여는 기능이 없고(`workspace.open`, `terminal.create`, `editor.open` 등만 있음, Orca 1.4.253 `orca-plugin-authoring` 참고 문서), 플러그인은 네트워크도 막혀 있다.
+- 그래서 **에이전트 훅**이 연다. Orca 터미널에는 `ORCA_WORKTREE_ID`(`<repoId>::<worktree 경로>`)가 있다(실제 터미널에서 확인). Orca가 띄운 Claude와 Codex도 Pixel Office 훅을 쓴다. Orca는 앱이 시작할 때 사용자 설정을 자기 프로필(Claude: `CLAUDE_CONFIG_DIR`, Codex: `CODEX_HOME`)로 복사하는데, 두 파일 모두 우리 훅이 들어 있음을 확인했다.
+
+### 11.2 동작 (`packages/cli/src/orca.ts`)
+
+1. 훅이 `start` 이벤트(프롬프트 제출, Claude 세션 시작)를 받았고 `ORCA_WORKTREE_ID`가 있으면 `pixel-office orca-open`을 분리 실행하고 바로 끝난다. 훅은 기다리지 않는다.
+2. 같은 worktree는 60초에 한 번만 확인한다(`~/.pixel-office/orca-open.json`). 훅이 실행 직전에 기록하므로 Claude와 Codex 훅이 같은 순간에 돌아도 한 번만 실행된다.
+3. `orca-open`은 서버가 답하지 않으면 띄운다(분리 실행). Orca만 쓰는 사용자도 서버를 따로 켤 필요가 없다.
+4. `orca tab list --worktree id:<id> --json`으로 그 worktree의 탭을 보고, `/?workspace=<worktree>` 탭이 없을 때만 `orca tab create --url ... --worktree id:<id>`로 만든다. 같은 폴더인지는 `normalizePath`로 비교한다.
+5. Orca CLI는 `ORCA_CLI_COMMAND`가 있으면 그것을, Windows에서는 설치된 `orca.exe`를 쓴다. Linux에서는 화면 낭독기와 겹치는 `orca` 대신 `orca-ide`를 쓴다.
+- 사용자가 탭을 닫으면 다음 확인(60초 뒤 첫 프롬프트) 때 다시 열린다. `PIXEL_OFFICE_ORCA_OPEN=0`이면 자동 열기를 하지 않는다.
+- 터미널에서 `pixel-office orca-open`을 직접 실행해도 된다.
+
+### 11.3 실제 확인 (2026-11-09, Orca 1.4.253, Windows)
+
+- Orca를 다시 시작한 뒤, worktree `C:\Users\00`의 Orca 터미널에서 `claude -p`로 짧은 요청을 보냈다. 훅이 `orca-open`을 실행했고 Orca 브라우저에 `http://127.0.0.1:47821/?workspace=C:/Users/00` 탭(`Pixel Office · 00`)이 생겼다.
+- 15초짜리 명령을 시킨 동안 그 탭에서 Claude가 "작업 중"으로 나왔다. 캡처: `screenshots/step8-orca-auto-tab.png`.
+- 다시 요청해도 탭은 하나였다. `orca-open`을 직접 실행하면 "이미 열려 있습니다"로 끝났다.
+- 테스트: 가짜 Orca CLI로 훅부터 `tab list`, `tab create` 호출까지 확인하는 테스트가 있다. Windows는 `.cmd`, Linux는 셸 스크립트로 돈다.
+
+### 11.4 확인하지 못한 것
+
+- Orca 안의 Codex로 탭이 열리는지. 같은 훅을 쓰지만 Orca의 Codex 계정에서 새 훅을 `/hooks`로 아직 신뢰하지 않았다.
+- `tab create`가 포커스를 가져가는지. 이번 확인에서 새 탭은 활성 탭이 되었다. 사용자가 거슬려 하면 다른 방법을 찾아야 한다.
+- WSL 안에서 실행한 Orca 터미널(`ORCA_CLI_COMMAND` 경로).

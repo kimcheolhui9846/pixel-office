@@ -4,12 +4,16 @@
  *
  *   pixel-office start [--port N]                   run the server in the foreground
  *   pixel-office url [folder]                       print the office address for one working folder
- *   pixel-office simulate [--loops N] [--speed X]   post the demo events to a running server
+ *   pixel-office orca-open                          open this Orca worktree's office tab (run by the hooks)
+ *   pixel-office orca-open                            Orca 터미널에서: 이 worktree의 사무실 탭을 Orca 브라우저에 엽니다
+                                                    (에이전트 훅이 자동으로 실행, 서버가 없으면 띄움)
+  pixel-office simulate [--loops N] [--speed X]   post the demo events to a running server
  *   pixel-office init [--agent A] [--dry-run] [--yes] [--windows-home P]   add our hooks
  *   pixel-office uninit [--agent A] [--dry-run] [--yes]   remove them again
  *
  * Messages for the user are Korean; code comments are English.
  */
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
@@ -28,6 +32,7 @@ import {
 } from "@pixel-office/core/server";
 
 import { defaultIo, runInit } from "./init.js";
+import { openOfficeTab, orcaCommand, orcaWorktree, runOrca } from "./orca.js";
 
 const USAGE = `사용법:
   pixel-office start [--port N]                     서버를 실행합니다 (기본 포트 ${DEFAULT_PORT}, Ctrl+C로 종료)
@@ -42,7 +47,8 @@ const USAGE = `사용법:
 
 환경 변수:
   PIXEL_OFFICE_HOME   server.json과 백업을 둘 폴더 (기본 ~/.pixel-office)
-  CLAUDE_CONFIG_DIR   Claude Code 설정 폴더 (기본 ~/.claude)`;
+  CLAUDE_CONFIG_DIR   Claude Code 설정 폴더 (기본 ~/.claude)
+  PIXEL_OFFICE_ORCA_OPEN=0   Orca에서 사무실 탭을 자동으로 열지 않습니다`;
 
 const NO_SERVER = "실행 중인 Pixel Office 서버가 없습니다. 먼저 `pixel-office start`를 실행하세요.";
 
@@ -72,6 +78,8 @@ async function main(argv: string[]): Promise<number> {
       return simulate(rest);
     case "url":
       return url(rest);
+    case "orca-open":
+      return orcaOpen(rest);
     case "init":
     case "uninit":
       return init(command, rest);
@@ -165,6 +173,64 @@ async function health(info: ServerInfo): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * The port of a running server; starts `pixel-office start` detached when none answers and
+ * waits up to 8 s for it. Null when nothing comes up.
+ */
+async function ensureServer(): Promise<number | null> {
+  const home = homeDir();
+  const current = readServerInfo(home);
+  if (current !== null && (await health(current))) {
+    return current.port;
+  }
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "start"], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.on("error", () => {});
+  child.unref();
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    await sleepUntil(Date.now() + 200);
+    const info = readServerInfo(home);
+    if (info !== null && (await health(info))) {
+      return info.port;
+    }
+  }
+  return null;
+}
+
+const ORCA_RESULT: Record<string, string> = {
+  exists: "이 worktree의 사무실 탭이 이미 열려 있습니다.",
+  created: "Orca 브라우저에 사무실 탭을 열었습니다.",
+  "orca-unavailable": "Orca CLI에 연결하지 못했습니다. Orca가 실행 중인지 확인하세요.",
+  failed: "Orca 브라우저 탭을 만들지 못했습니다.",
+};
+
+/** Opens the office of the Orca worktree this terminal belongs to. */
+async function orcaOpen(args: string[]): Promise<number> {
+  parseArgs({ args, options: {}, allowPositionals: false, strict: true });
+  const worktree = orcaWorktree(process.env);
+  if (worktree === null) {
+    console.error("Orca 터미널 밖입니다(ORCA_WORKTREE_ID가 없음). Orca worktree의 터미널에서 실행하세요.");
+    return 1;
+  }
+  const port = await ensureServer();
+  if (port === null) {
+    console.error(`서버를 시작하지 못했습니다. 포트 ${DEFAULT_PORT}을 다른 프로그램이 쓰는지 확인하세요.`);
+    return 1;
+  }
+  const result = openOfficeTab(worktree, port, runOrca(orcaCommand(process.env)));
+  const text = ORCA_RESULT[result] ?? result;
+  if (result === "exists" || result === "created") {
+    console.log(text);
+    return 0;
+  }
+  console.error(text);
+  return 1;
 }
 
 const sleepUntil = (at: number) =>
