@@ -148,7 +148,7 @@ npx pixel-office doctor   # 새 훅 이벤트가 생겼으면 init을 다시 하
 - Codex 도구 이름은 실제 훅에서 `Bash`만 확인했다. `apply_patch`, `update_plan` 등은 문서를 보고 넣었다.
 - 마켓플레이스 배포, VS Code 원격(WSL, SSH) 창.
 - WSL 안에서 돌린 에이전트. 코드와 테스트는 있지만 실제 WSL에서 돌려 보지 않았다. WSL은 mirrored networking이어야 한다.
-- 9c단계의 새 사무실 화면은 웹 브라우저와 VS Code(vsix 설치)에서 확인했다. Orca 탭은 그 전 화면으로 확인했다.
+- Orca 안에서 서브에이전트 인턴이 화면에 나오는 순간은 캡처하지 못했다. Orca의 설정 사본에 서브에이전트 훅이 들어 있고, Orca 안의 Claude가 일을 넘기며 기획 구역으로 옮기는 것까지 확인했다.
 - Claude Code 훅은 백그라운드로 돌아서 이벤트 순서가 가끔 바뀔 수 있다. 화면에 드러나는 경우는 보지 못했다.
 
 자세한 근거와 확인 날짜는 `docs/DESIGN.md`에 있다.
@@ -159,7 +159,7 @@ npx pixel-office doctor   # 새 훅 이벤트가 생겼으면 init을 다시 하
 
 | 기준 | 결과 | 근거 |
 |---|---|---|
-| VS Code와 Orca 양쪽에서 같은 UI가 뜨고 상태가 갱신된다 | 충족 (Orca는 9c 이전 화면으로 확인) | `docs/screenshots/step10-vscode-vsix.png`(vsix로 설치한 VS Code, 9c 화면), `step7-vscode-webview.png`, `step8-orca-auto-tab.png`. DESIGN 10.3, 11.3, 14.3 |
+| VS Code와 Orca 양쪽에서 같은 UI가 뜨고 상태가 갱신된다 | 충족 | `docs/screenshots/step10-vscode-vsix.png`(vsix로 설치한 VS Code), `step10-orca-9c.png`(Orca 브라우저 탭), `step7-vscode-webview.png`, `step8-orca-auto-tab.png`. DESIGN 10.3, 11.3, 14.3, 14.4 |
 | Claude Code 상태가 훅 신호만으로 전환된다 | 충족 | 실제 세션 캡처 `step4-real-*.png`, `step9c-live-subagent.png`. DESIGN 7절 |
 | 훅/서버 장애가 에이전트 작업을 막지 않는다 | 충족 | 훅은 0.5초 안에 출력 없이 끝나고 항상 종료 코드 0이다. Claude 훅은 백그라운드로 돈다. 서버가 없을 때 약 70ms, 응답 없는 서버에서 약 580ms(동기로 도는 Codex 훅은 이만큼 기다린다). DESIGN 7.3 |
 | 서로 다른 worktree의 세션이 섞이지 않는다 | 충족 | `step6-workspace-*.png`. DESIGN 9.3 |

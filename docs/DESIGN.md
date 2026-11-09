@@ -594,3 +594,10 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 - **실제 확인 (2026-11-09, VS Code 1.145.2):**
   - vsix를 저장소 밖 폴더에 풀어, 그 안의 cli로 서버를 띄웠다. 화면 파일 경고 없이 떴고, 확장 위치에서 core와 cli를 찾았다.
   - 사용자 VS Code를 건드리지 않도록 임시 `--user-data-dir`, `--extensions-dir`에 설치하고, `D:\aaa\skill_kit_kch`를 연 새 창에서 확장이 사무실 탭을 자동으로 열었다. 9c 화면에 이 개발 세션(Claude)이 작업 구역에 보였다. 캡처: `screenshots/step10-vscode-vsix.png`.
+
+### 14.4 Orca에서 9c 화면 확인 (2026-11-09, Orca 1.4.253)
+
+- 9c단계 init 뒤 Orca를 새로 시작했다. `doctor`로 Orca 설정 사본(`claude-profiles/<id>/home`, `codex-accounts/<id>/home`)을 점검하니 Claude 이벤트 9개(서브에이전트 훅 포함), Codex 이벤트 6개가 모두 들어 있었다.
+- Orca의 홈 폴더 worktree에서 `orca agent launch --agent claude --surface terminal`로 Claude를 띄우고 Explore 서브에이전트를 한 번 쓰게 했다. 폴더 신뢰 질문은 사용자가 직접 답했다.
+- 그 worktree의 사무실 탭(`?workspace=C:/Users/00`)에 새 사무실 화면이 떴고, Orca 안의 Claude는 일을 넘긴 뒤 기획 구역에서 쉬었다. 캡처: `screenshots/step10-orca-9c.png`.
+- 확인하지 못한 것: 서브에이전트 인턴이 화면에 나온 순간. 끝나고 4초 뒤 나가는데 캡처는 그 뒤에 했고, 서버는 이벤트를 기록하지 않는다.
