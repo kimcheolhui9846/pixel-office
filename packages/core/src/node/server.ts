@@ -8,6 +8,8 @@
  *   (forces a CORS preflight, which we refuse), 16 KiB body limit, strict fields.
  * - `/ws` is a WebSocket (library `ws`) that only pushes `{scene, sessions}`. The upgrade
  *   needs the right Host, an Origin that is ours (WebSocket has no CORS) and the token.
+ *   `/ws?workspace=<folder>` limits that client to the sessions inside one working folder
+ *   (step 6); without it the client sees every session.
  * - `GET /health` says that the server on this port is ours.
  * - Everything else under GET is the built UI; `index.html` gets the token in a meta tag.
  *
@@ -38,6 +40,8 @@ import {
   type Session,
   type Timing,
 } from "../state.js";
+import { workspaceState } from "../workspace.js";
+import { LIMITS } from "../limits.js";
 import { homeDir, removeServerInfo, TOKEN_HEADER, writeServerInfo } from "./home.js";
 import { checkEvent } from "./validate.js";
 
@@ -96,6 +100,7 @@ export class PortInUseError extends Error {
 }
 
 const STATUS_TEXT: Record<number, string> = {
+  400: "Bad Request",
   401: "Unauthorized",
   403: "Forbidden",
   503: "Service Unavailable",
@@ -115,7 +120,9 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
   const tokenHash = digest(token);
 
   let state: OfficeState = { ...EMPTY_STATE, now: Date.now() };
-  let lastPayload = payload(state);
+  // the text each client last received, and the workspace it asked for
+  const lastSent = new WeakMap<WebSocket, string>();
+  const workspaceOf = new WeakMap<WebSocket, string | null>();
   let accepted = 0;
   let rejected = 0;
   let port = 0;
@@ -227,8 +234,13 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
     if (rawPath !== WS_PATH) {
       return refuse(403);
     }
-    if (!tokenOk(new URLSearchParams(query).get("token"))) {
+    const params = new URLSearchParams(query);
+    if (!tokenOk(params.get("token"))) {
       return refuse(401);
+    }
+    const workspace = params.get("workspace");
+    if (workspace !== null && !workspaceOk(workspace)) {
+      return refuse(400);
     }
     if (wss.clients.size >= maxClients) {
       return refuse(503);
@@ -239,7 +251,10 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
       // Client messages are ignored. ws closes the socket (1009) on a frame over
       // maxPayload and reports it as an error; without a listener that would crash us.
       ws.on("error", () => ws.terminate());
-      ws.send(lastPayload);
+      workspaceOf.set(ws, workspace);
+      const text = payload(state, workspace);
+      lastSent.set(ws, text);
+      ws.send(text);
     });
   }
 
@@ -347,13 +362,21 @@ export async function startServer(options: ServerOptions = {}): Promise<RunningS
 
   function apply(next: OfficeState) {
     state = next;
-    const text = payload(state);
-    if (text !== lastPayload) {
-      lastPayload = text;
-      for (const client of wss.clients) {
-        if (client.readyState === client.OPEN) {
-          client.send(text);
-        }
+    // one payload per workspace asked for, then only clients whose text changed get it
+    const texts = new Map<string | null, string>();
+    for (const client of wss.clients) {
+      if (client.readyState !== client.OPEN) {
+        continue;
+      }
+      const workspace = workspaceOf.get(client) ?? null;
+      let text = texts.get(workspace);
+      if (text === undefined) {
+        text = payload(state, workspace);
+        texts.set(workspace, text);
+      }
+      if (lastSent.get(client) !== text) {
+        lastSent.set(client, text);
+        client.send(text);
       }
     }
   }
@@ -449,16 +472,27 @@ function closeServer(server: Server): Promise<void> {
   });
 }
 
-/** What clients receive. Sessions are sorted by key so equal states give equal text. */
-export function snapshot(state: OfficeState): Snapshot {
-  const sessions = Object.keys(state.sessions)
+/**
+ * What clients receive. Sessions are sorted by key so equal states give equal text. With a
+ * workspace, only that folder's sessions count, for the scene as well as the list.
+ */
+export function snapshot(state: OfficeState, workspace: string | null = null): Snapshot {
+  const scoped = workspaceState(state, workspace);
+  const sessions = Object.keys(scoped.sessions)
     .sort()
-    .map((key) => state.sessions[key]!);
-  return { scene: scene(state), sessions };
+    .map((key) => scoped.sessions[key]!);
+  return { scene: scene(scoped), sessions };
 }
 
-function payload(state: OfficeState): string {
-  return JSON.stringify(snapshot(state));
+function payload(state: OfficeState, workspace: string | null = null): string {
+  return JSON.stringify(snapshot(state, workspace));
+}
+
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
+/** A workspace folder from the URL: 1..1024 characters, no control characters. */
+function workspaceOk(value: string): boolean {
+  return value.trim().length >= 1 && value.length <= LIMITS.cwd && !CONTROL.test(value);
 }
 
 /** Adds `<meta name="pixel-office-token">` right after `<head>`. The token is hex. */

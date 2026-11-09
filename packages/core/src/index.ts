@@ -7,3 +7,4 @@ export * from "./demo.js";
 export * from "./limits.js";
 export * from "./claude.js";
 export * from "./codex.js";
+export * from "./workspace.js";
