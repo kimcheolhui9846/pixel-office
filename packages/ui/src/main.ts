@@ -10,6 +10,8 @@ import { demoScene, type Scene, workspaceName } from "@pixel-office/core";
 
 import { art, HEIGHT, type Op, WIDTH } from "./art.js";
 import { backoffMs } from "./backoff.js";
+import { pixelSheet } from "./sheet.js";
+import { SPRITES } from "./sprites.js";
 import { readToken, TOKEN_META } from "./token.js";
 
 const FPS = 10;
@@ -17,6 +19,7 @@ const IDLE_SCENE: Scene = { mode: "IDLE", focus: null, desks: { codex: "idle", c
 
 const canvas = document.getElementById("office") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
+const sheet = pixelSheet(SPRITES);
 const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const params = new URLSearchParams(location.search);
 const demo = params.has("demo");
@@ -49,10 +52,13 @@ function fit() {
 
 function paint(ops: Op[]) {
   for (const op of ops) {
-    ctx.fillStyle = op.color;
-    if (op.kind === "rect") {
+    if (op.kind === "sprite") {
+      sheet.draw(ctx, op.name, op.x, op.y);
+    } else if (op.kind === "rect") {
+      ctx.fillStyle = op.color;
       ctx.fillRect(op.x, op.y, op.w, op.h);
     } else {
+      ctx.fillStyle = op.color;
       ctx.font = "6px monospace";
       ctx.fillText(op.text, op.x, op.y);
     }

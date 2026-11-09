@@ -1,10 +1,12 @@
 /**
- * What to draw, as a plain list of rectangles and text (step 2). Pure: the same scene and
- * frame always give the same list, so it is tested in Node without a canvas. Shapes are drawn
- * here from code; there are no outside image assets. A sprite-sheet loader can replace the
- * characters later (step 9).
+ * What to draw, as a plain list of rectangles, text and sprites (steps 2 and 9). Pure: the
+ * same scene and frame always give the same list, so it is tested in Node without a canvas.
+ * The room is drawn from rectangles; characters and props are sprites by name from
+ * `sprites.ts` (pixel data written in code, no outside image assets).
  */
 import type { Scene, SessionStatus } from "@pixel-office/core";
+
+import { type Agent, type Pose, SPRITES } from "./sprites.js";
 
 /** Logical size in pixels; the page scales it up by a whole number. */
 export const WIDTH = 160;
@@ -12,7 +14,8 @@ export const HEIGHT = 96;
 
 export type Op =
   | { kind: "rect"; x: number; y: number; w: number; h: number; color: string; tag?: string }
-  | { kind: "text"; x: number; y: number; text: string; color: string; tag?: string };
+  | { kind: "text"; x: number; y: number; text: string; color: string; tag?: string }
+  | { kind: "sprite"; name: string; x: number; y: number; w: number; h: number; tag?: string };
 
 export interface ArtOptions {
   /** Animation frame (the page counts up at a fixed low rate). */
@@ -42,10 +45,6 @@ const C = {
   alarmOff: "#555560",
   alarmOn: "#ff3b30",
   alarmDim: "#a4161a",
-  codex: "#4361ee",
-  claude: "#e76f51",
-  skin: "#f1c27d",
-  coffee: "#6f4e37",
   flag: "#2dc653",
   text: "#f8f9fa",
   dim: "#adb5bd",
@@ -93,6 +92,8 @@ function room(ops: Op[], scene: Scene, f: number) {
     }
   }
   ops.push({ kind: "rect", x: 0, y: 86, w: WIDTH, h: 10, color: "#1b1b24" });
+  sprite(ops, "plant", 2, 72);
+  sprite(ops, "plant", 150, 72);
   if (scene.mode === "CLAUDE_ALERT") {
     // a red frame around the room, brighter on every other frame
     const red = f % 2 === 0 ? C.alarmOn : C.alarmDim;
@@ -148,66 +149,67 @@ function claudeDesk(ops: Op[], scene: Scene, f: number) {
   }
 }
 
-/** A character is a body, a head and two arms; `pose` moves the arms. */
-function person(ops: Op[], x: number, y: number, color: string, pose: "type" | "fold" | "head" | "rest" | "cheer", tag: string) {
-  ops.push({ kind: "rect", x: x + 1, y, w: 6, h: 6, color: C.skin, tag });
-  ops.push({ kind: "rect", x, y: y + 6, w: 8, h: 9, color, tag });
-  const arms: Record<typeof pose, [number, number, number, number][]> = {
-    type: [[-2, 8, 2, 2], [8, 8, 2, 2]],
-    fold: [[1, 8, 6, 2]],
-    head: [[-1, -1, 2, 5], [7, -1, 2, 5]],
-    rest: [[-2, 10, 2, 4], [8, 10, 2, 4]],
-    cheer: [[-2, -3, 2, 6], [8, -3, 2, 6]],
-  };
-  for (const [dx, dy, w, h] of arms[pose]) {
-    ops.push({ kind: "rect", x: x + dx, y: y + dy, w, h, color: C.skin, tag: `${tag}-${pose}` });
-  }
+/** A character frame from the sprite sheet, tagged `<agent>-<pose>` (read by the tests). */
+function person(ops: Op[], agent: Agent, pose: Pose, x: number, y: number) {
+  const name = `${agent}/${pose}`;
+  const sprite = SPRITES[name]!;
+  ops.push({ kind: "sprite", name, x, y, w: sprite.w, h: sprite.h, tag: `${agent}-${pose}` });
 }
+
+const SEAT_Y = 61;
+const CODEX_X = 34;
+const CLAUDE_X = 114;
 
 function codexCharacter(ops: Op[], scene: Scene, f: number) {
   switch (scene.mode) {
     case "CODEX_BUILDING":
-      person(ops, 36, 64 - (f % 2), C.codex, "type", "codex");
+      // storm typing: the hands swap on every frame
+      person(ops, "codex", f % 2 === 0 ? "type0" : "type1", CODEX_X, SEAT_Y);
       break;
     case "CLAUDE_RUNNING":
-      person(ops, 36, 64, C.codex, "rest", "codex");
-      ops.push({ kind: "rect", x: 46, y: 68, w: 3, h: 4, color: C.coffee, tag: "codex-coffee" });
+      person(ops, "codex", "coffee", CODEX_X, SEAT_Y);
       break;
     case "CLAUDE_ALERT":
       if (scene.focus === "codex") {
-        person(ops, 36, 64, C.codex, "head", "codex");
+        person(ops, "codex", "head", CODEX_X, SEAT_Y);
       } else {
-        person(ops, 70, 64, C.codex, "rest", "codex"); // turned around, looking worried
+        person(ops, "codex", "worried", 72, SEAT_Y); // turned around, looking at Claude
       }
       break;
     case "SUCCESS":
-      person(ops, 36, 64 - (f % 2), C.codex, "rest", "codex"); // nodding
+      person(ops, "codex", Math.floor(f / 3) % 2 === 0 ? "rest" : "nod", CODEX_X, SEAT_Y);
       break;
     default:
-      person(ops, 36, 64, C.codex, "rest", "codex");
+      person(ops, "codex", "chin", CODEX_X, SEAT_Y);
+      sprite(ops, "blueprint", 44, 55, "codex-blueprint");
   }
 }
 
 function claudeCharacter(ops: Op[], scene: Scene, f: number) {
   switch (scene.mode) {
     case "CLAUDE_RUNNING":
-      person(ops, 116 + (f % 3) - 1, 64, C.claude, "type", "claude");
+      person(ops, "claude", Math.floor(f / 2) % 2 === 0 ? "type0" : "type1", CLAUDE_X + (f % 3) - 1, SEAT_Y);
       break;
     case "CODEX_BUILDING":
-      person(ops, 84, 64, C.claude, "fold", "claude"); // watching from behind
+      person(ops, "claude", "fold", 82, SEAT_Y); // watching from behind
       break;
     case "CLAUDE_ALERT":
-      person(ops, 116, 64, C.claude, scene.focus === "claude" ? "head" : "fold", "claude");
+      person(ops, "claude", scene.focus === "claude" ? "head" : "fold", CLAUDE_X, SEAT_Y);
       break;
     case "SUCCESS":
-      person(ops, 116, 64, C.claude, "cheer", "claude");
+      person(ops, "claude", "cheer", CLAUDE_X, SEAT_Y);
       ops.push({ kind: "rect", x: 128, y: 54, w: 1, h: 12, color: C.dim, tag: "pass-flag" });
       ops.push({ kind: "rect", x: 129, y: 54, w: 14, h: 6, color: C.flag, tag: "pass-flag" });
       ops.push({ kind: "text", x: 130, y: 59, text: "PASS", color: C.text, tag: "pass-flag" });
       break;
     default:
-      person(ops, 116, 64, C.claude, "fold", "claude");
+      person(ops, "claude", "fold", CLAUDE_X, SEAT_Y);
   }
+}
+
+function sprite(ops: Op[], name: string, x: number, y: number, tag?: string) {
+  const s = SPRITES[name]!;
+  ops.push({ kind: "sprite", name, x, y, w: s.w, h: s.h, ...(tag ? { tag } : {}) });
 }
 
 function confetti(ops: Op[], f: number) {
