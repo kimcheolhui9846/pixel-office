@@ -262,7 +262,8 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 
 ### 8.5 확인하지 못한 것
 
-- 래퍼 방식 훅이 실제 세션에서 실행되는지(8.6 다음 확인). async로 되돌려도 되는지.
+- async로 되돌려도 되는지(PowerShell 실패가 원인이었으므로 될 가능성이 있다).
+- Orca 안의 Codex에서 래퍼 방식이 도는지. Orca는 앱을 시작할 때만 `~/.codex/hooks.json`을 계정 폴더로 복사해서, 이번 확인은 `CODEX_HOME`을 지운 같은 터미널에서 했다.
 - `PermissionRequest`가 승인 창마다 오는지, 자동 승인 모드에서는 오지 않는지.
 - `PostModelRequest`의 `failed`가 재시도 중인 일시 오류에도 오는지. 그렇다면 잠깐 "문제 발생"이 보였다가 다음 이벤트로 돌아간다.
 
@@ -273,3 +274,5 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 - **1차: 이벤트가 오지 않았다.** 작업 하나를 끝까지 돌리는 동안 서버에 Codex 이벤트가 하나도 오지 않았고, `PIXEL_OFFICE_DEBUG=1`의 로그 파일도 생기지 않았다. 같은 파일의 Orca 훅(동기)은 실행됐다. 같은 명령을 `cmd.exe /C "..."`로 직접 실행하면 서버가 받았다(204).
 - **2차: 원인은 셸이었다.** async를 빼고 다시 신뢰하자 Codex 화면에 "Hook failed, exited with code 1"과 PowerShell 구문 오류(`UnexpectedToken`, `"…node.exe" "…hook.js" codex`)가 보였다. 즉 이 버전은 훅을 PowerShell로 실행한다(소스의 `cmd.exe` 기본값과 다름). 1차에서 이벤트가 없던 것도 같은 실패가 async라서 화면에 안 보였던 것으로 본다. "async가 실행되지 않는다"는 1차의 추정은 틀렸다.
 - **수정:** Windows 훅 명령을 래퍼 경로 하나로 바꿨다(8.3). 테스트는 래퍼를 `cmd.exe /C "..."`와 `powershell.exe -Command`로 실제 실행해 인자와 stdin이 그대로 전달되고 출력이 없는지 확인한다.
+- **3차: 동작 확인.** 래퍼 방식을 적용하고(`~/.codex/hooks.json`), Orca 터미널에서 `CODEX_HOME`을 지운 채 Codex를 열어 바뀐 훅 6개를 신뢰했다. 짧은 작업 하나에 Codex 책상이 작업 중 → 완료 → 약 4초 뒤 쉬는 중으로 바뀌었고, "Hook failed"는 없었다. 캡처: `screenshots/step5-codex-working.png`, `screenshots/step5-codex-success.png`.
+- **Orca 계정 폴더는 앱 시작 때만 갱신된다.** `init` 뒤에도 Orca 안의 Codex는 예전 훅을 쓰다가, Orca를 다시 시작한 뒤에 새 훅을 받았다. 그래서 `init` 뒤에는 Orca를 다시 시작하고, Orca 안의 Codex에서도 `/hooks`로 신뢰해야 한다.
