@@ -589,7 +589,8 @@ describe("Codex hooks", () => {
   });
 
   test("init --agent both writes both files with separate backups; uninit restores both", async () => {
-    const f = fake({ platform: "win32" }, FIXTURE_TEXT);
+    // the real OS: a faked win32 on Linux would give a wrapper path without a drive letter
+    const f = fake({ platform: process.platform }, FIXTURE_TEXT);
     const codexFile = join(f.home, ".codex", "hooks.json");
     mkdirSync(dirname(codexFile), { recursive: true });
     writeFileSync(codexFile, CODEX_TEXT);
@@ -609,13 +610,17 @@ describe("Codex hooks", () => {
     assert.equal(read(join(f.poHome, "backups", stamp, "claude-settings.json")), FIXTURE_TEXT);
     assert.match(f.out.join("\n"), /\/hooks/);
     const wrapper = join(f.poHome, "pixel-office-codex-hook.cmd");
-    assert.match(read(wrapper), /^@echo off\r\n/);
-    // a moved repo changes only the wrapper; the trusted hook command stays the same
-    f.io.hookPath = repo("repo-moved-for-wrapper");
-    f.out.length = 0;
-    assert.equal(await runInit("init", { ...YES, agent: "codex" }, f.io), 0, f.err.join("\n"));
-    assert.ok(read(wrapper).includes("repo-moved-for-wrapper"));
-    assert.doesNotMatch(f.out.join("\n"), /\/hooks/);
+    const windows = process.platform === "win32";
+    assert.equal(existsSync(wrapper), windows, "the wrapper exists only on Windows");
+    if (windows) {
+      assert.match(read(wrapper), /^@echo off\r\n/);
+      // a moved repo changes only the wrapper; the trusted hook command stays the same
+      f.io.hookPath = repo("repo-moved-for-wrapper");
+      f.out.length = 0;
+      assert.equal(await runInit("init", { ...YES, agent: "codex" }, f.io), 0, f.err.join("\n"));
+      assert.ok(read(wrapper).includes("repo-moved-for-wrapper"));
+      assert.doesNotMatch(f.out.join("\n"), /\/hooks/);
+    }
     f.io.now = () => new Date("2026-11-09T07:00:00.000Z");
     assert.equal(await runInit("uninit", YES, f.io), 0, f.err.join("\n"));
     assert.equal(read(codexFile), CODEX_TEXT);
@@ -637,7 +642,7 @@ describe("Codex hooks", () => {
   });
 
   test("CODEX_HOME moves the Codex file", async () => {
-    const f = fake({ platform: "win32" });
+    const f = fake({ platform: process.platform });
     const codexHome = join(f.home, "custom-codex");
     f.io.env = { ...f.io.env, CODEX_HOME: codexHome };
     assert.equal(await runInit("init", { ...YES, agent: "codex" }, f.io), 0, f.err.join("\n"));
