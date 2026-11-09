@@ -4,7 +4,7 @@
  * the state, the WebSocket or the log.
  */
 import { LIMITS } from "../limits.js";
-import type { AgentEvent, AgentEventType, AgentKind } from "../state.js";
+import { type AgentEvent, type AgentEventType, type AgentKind, type Zone, ZONES } from "../state.js";
 
 export { LIMITS };
 
@@ -49,6 +49,15 @@ export function checkEvent(body: unknown, now: number): Checked {
   if (b.detail !== undefined && !isText(b.detail, 0, LIMITS.detail)) {
     return { ok: false, reason: `detail must be a string of at most ${LIMITS.detail} chars` };
   }
+  if (b.zone !== undefined && (typeof b.zone !== "string" || !(ZONES as readonly string[]).includes(b.zone))) {
+    return { ok: false, reason: `zone must be one of ${ZONES.join(", ")}` };
+  }
+  if (b.subagentId !== undefined && !isText(b.subagentId, 1, LIMITS.sessionId)) {
+    return { ok: false, reason: `subagentId must be a string of 1-${LIMITS.sessionId} chars` };
+  }
+  if (b.role !== undefined && !isText(b.role, 0, LIMITS.detail)) {
+    return { ok: false, reason: `role must be a string of at most ${LIMITS.detail} chars` };
+  }
   const event: AgentEvent = {
     agent: b.agent as AgentKind,
     type: b.type as AgentEventType,
@@ -58,6 +67,15 @@ export function checkEvent(body: unknown, now: number): Checked {
   };
   if (typeof b.detail === "string") {
     event.detail = b.detail;
+  }
+  if (typeof b.zone === "string") {
+    event.zone = b.zone as Zone;
+  }
+  if (typeof b.subagentId === "string") {
+    event.subagentId = b.subagentId;
+    if (typeof b.role === "string" && b.role !== "") {
+      event.role = b.role;
+    }
   }
   return { ok: true, event };
 }

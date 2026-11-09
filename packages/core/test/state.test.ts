@@ -152,6 +152,8 @@ describe("scene", () => {
       mode: "IDLE",
       focus: null,
       desks: { codex: "idle", claude: "idle" },
+      people: [],
+      hidden: 0,
     });
   });
 

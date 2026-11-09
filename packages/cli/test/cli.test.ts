@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { DEMO_SCRIPT } from "@pixel-office/core";
 import { startServer } from "@pixel-office/core/server";
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "cli.js");
@@ -48,11 +49,12 @@ describe("simulate", () => {
     try {
       const result = await run(["simulate", "--loops", "1", "--speed", "50"], home);
       assert.equal(result.code, 0, result.stderr);
-      assert.equal(server.stats().accepted, 4);
+      assert.equal(server.stats().accepted, DEMO_SCRIPT.length);
       assert.equal(server.stats().rejected, 0);
       const sessions = Object.values(server.state().sessions);
-      assert.deepEqual(sessions.map((s) => s.sessionId).sort(), ["demo-claude", "demo-codex"]);
-      assert.match(result.stdout, /이벤트 4개/);
+      assert.deepEqual([...new Set(sessions.map((s) => s.sessionId))].sort(), ["demo-claude", "demo-claude-2", "demo-codex"]);
+      assert.ok(sessions.some((s) => s.subagentId === "sub-1"), "the demo subagent arrives");
+      assert.match(result.stdout, new RegExp(`이벤트 ${DEMO_SCRIPT.length}개`));
     } finally {
       await server.close();
     }
@@ -64,7 +66,7 @@ describe("simulate", () => {
     try {
       const result = await run(["simulate", "--loops", "2", "--speed", "100"], home);
       assert.equal(result.code, 0, result.stderr);
-      assert.equal(server.stats().accepted, 8);
+      assert.equal(server.stats().accepted, 2 * DEMO_SCRIPT.length);
     } finally {
       await server.close();
     }

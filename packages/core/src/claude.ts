@@ -9,6 +9,7 @@
 import { LIMITS } from "./limits.js";
 import { shortLabel, text } from "./fields.js";
 import type { AgentEvent, AgentEventType } from "./state.js";
+import { zoneOfTool } from "./zones.js";
 
 /** The hook events `pixel-office init` registers; everything else maps to null. */
 export const CLAUDE_HOOK_EVENTS = [
@@ -19,6 +20,8 @@ export const CLAUDE_HOOK_EVENTS = [
   "Notification",
   "Stop",
   "StopFailure",
+  "SubagentStart",
+  "SubagentStop",
 ] as const;
 
 /**
@@ -83,7 +86,11 @@ export function fromClaudeHook(payload: unknown, now: number = Date.now()): Agen
       type = "waiting";
       break;
     case "Stop":
+    case "SubagentStop":
       type = "stop";
+      break;
+    case "SubagentStart":
+      type = "start";
       break;
     case "StopFailure":
       // `error` is an API error type such as rate_limit; it is a fixed label, not user text
@@ -98,6 +105,25 @@ export function fromClaudeHook(payload: unknown, now: number = Date.now()): Agen
   const label = detail === undefined ? undefined : shortLabel(detail);
   if (label) {
     event.detail = label;
+  }
+  // Inside a subagent the docs add `agent_id` and `agent_type` to every event (step 9c).
+  // `agent_type` alone (a session started with --agent) is not a subagent.
+  const subagentId = text(p.agent_id, LIMITS.sessionId);
+  if (subagentId !== undefined) {
+    event.subagentId = subagentId;
+    const role = typeof p.agent_type === "string" ? shortLabel(p.agent_type) : undefined;
+    if (role) {
+      event.role = role;
+    }
+  }
+  const zone =
+    p.permission_mode === "plan" || p.hook_event_name === "UserPromptSubmit"
+      ? "plan"
+      : p.hook_event_name === "PreToolUse" || p.hook_event_name === "PostToolUse" || p.hook_event_name === "PostToolUseFailure"
+        ? zoneOfTool(toolName, p.tool_input)
+        : undefined;
+  if (zone !== undefined) {
+    event.zone = zone;
   }
   return event;
 }

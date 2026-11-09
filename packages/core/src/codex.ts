@@ -14,6 +14,7 @@
 import { shortLabel, text } from "./fields.js";
 import { LIMITS } from "./limits.js";
 import type { AgentEvent, AgentEventType } from "./state.js";
+import { zoneOfTool } from "./zones.js";
 
 /** The hook events `pixel-office init` registers for Codex; everything else maps to null. */
 export const CODEX_HOOK_EVENTS = [
@@ -74,6 +75,15 @@ export function fromCodexHook(payload: unknown, now: number = Date.now()): Agent
   const label = detail === undefined ? undefined : shortLabel(detail);
   if (label) {
     event.detail = label;
+  }
+  const zone =
+    p.hook_event_name === "UserPromptSubmit"
+      ? "plan"
+      : p.hook_event_name === "PreToolUse" || p.hook_event_name === "PostToolUse" || p.hook_event_name === "PermissionRequest"
+        ? zoneOfTool(toolName, p.tool_input)
+        : undefined;
+  if (zone !== undefined) {
+    event.zone = zone;
   }
   return event;
 }

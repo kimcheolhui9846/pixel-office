@@ -1,21 +1,25 @@
 /**
- * The page: draws the office at a fixed low frame rate (10 fps), stops while the tab is
- * hidden, and repaints only when the picture changes.
+ * The page: draws the office at a low frame rate (10 fps), stops while the tab is hidden,
+ * and repaints only when the picture changes. While someone walks (step 9c) it draws at
+ * 20 fps for a smoother walk, and goes back to 10 fps as soon as everyone has arrived.
  *
  * Sources: `?demo` plays the shared demo script with no server. Otherwise the page reads
  * the token the server put in a meta tag and follows the server's WebSocket (`/ws`),
  * reconnecting with exponential backoff and showing the "not connected" banner meanwhile.
  */
-import { demoScene, type Scene, workspaceName } from "@pixel-office/core";
+import { demoScene, MAX_PEOPLE, type Scene, workspaceName } from "@pixel-office/core";
 
 import { art, HEIGHT, type Op, WIDTH } from "./art.js";
 import { backoffMs } from "./backoff.js";
+import { peopleOf } from "./floor.js";
 import { pixelSheet } from "./sheet.js";
 import { SPRITES } from "./sprites.js";
 import { readToken, TOKEN_META } from "./token.js";
+import { actorsAt, moving, nextStage, type Stage } from "./walk.js";
 
 const FPS = 10;
-const IDLE_SCENE: Scene = { mode: "IDLE", focus: null, desks: { codex: "idle", claude: "idle" } };
+const WALK_FPS = 20;
+const IDLE_SCENE: Scene = { mode: "IDLE", focus: null, desks: { codex: "idle", claude: "idle" }, people: [], hidden: 0 };
 
 const canvas = document.getElementById("office") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
@@ -37,7 +41,7 @@ const started = performance.now();
 let live: Scene = IDLE_SCENE;
 let connected = false;
 
-let frame = 0;
+let stage: Stage | null = null;
 let last = "";
 let timer: number | undefined;
 
@@ -60,41 +64,46 @@ function paint(ops: Op[]) {
     } else {
       ctx.fillStyle = op.color;
       ctx.font = "6px monospace";
-      ctx.fillText(op.text, op.x, op.y);
+      ctx.textAlign = op.align ?? "left";
+      ctx.fillText(op.text, op.x, op.y); // text only: names from agents are never HTML
     }
   }
 }
 
 function step() {
-  const elapsed = frozenAt ?? performance.now() - started;
+  timer = undefined;
+  const now = performance.now();
+  const elapsed = frozenAt ?? now - started;
   const current = demo ? demoScene(elapsed) : live;
-  const ops = art(current, { frame, reducedMotion: motion.matches, connected: demo || connected });
+  stage = nextStage(stage, peopleOf(current).slice(0, MAX_PEOPLE), now, motion.matches);
+  // the frame follows the clock, so walking faster does not speed up the other animations
+  const frame = Math.floor((now - started) / (1000 / FPS));
+  const ops = art(current, { frame, reducedMotion: motion.matches, connected: demo || connected, actors: actorsAt(stage, now) });
   const key = JSON.stringify(ops);
   if (key !== last) {
     paint(ops);
     last = key;
   }
   document.body.dataset.mode = current.mode; // read by tests and the screenshot check
-  frame += 1;
+  timer = window.setTimeout(step, 1000 / (moving(stage, now) ? WALK_FPS : FPS));
 }
 
 function start() {
   if (timer === undefined) {
-    timer = window.setInterval(step, 1000 / FPS);
     step();
   }
 }
 
 function stop() {
   if (timer !== undefined) {
-    window.clearInterval(timer);
+    window.clearTimeout(timer);
     timer = undefined;
   }
 }
 
 function isScene(value: unknown): value is Scene {
   const v = value as Scene | null;
-  return typeof v === "object" && v !== null && typeof v.mode === "string" && typeof v.desks === "object";
+  return typeof v === "object" && v !== null && typeof v.mode === "string" && typeof v.desks === "object" && v.desks !== null;
 }
 
 /**
@@ -121,6 +130,7 @@ function follow(first: string) {
       try {
         const data = JSON.parse(String(message.data)) as { scene?: unknown };
         if (isScene(data.scene)) {
+          // an older server sends no `people`: `peopleOf` then seats one Codex and one Claude
           live = data.scene;
           connected = true;
           attempt = 0; // a good message resets the backoff
