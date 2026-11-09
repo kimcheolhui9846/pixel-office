@@ -4,6 +4,7 @@ import { describe, test } from "node:test";
 import { DEMO_LOOP_MS, demoScene, type Scene, type SceneMode } from "@pixel-office/core";
 
 import { art, HEIGHT, type Op, WIDTH } from "../src/art.js";
+import { CHAR_H, CHAR_W, POSES, SPRITES } from "../src/sprites.js";
 
 const base = { frame: 0, reducedMotion: false, connected: true };
 
@@ -44,7 +45,7 @@ describe("art", () => {
     for (const frame of [0, 1, 2, 3]) {
       const ops = art(sceneOf("CLAUDE_ALERT"), { ...base, frame });
       const alarm = ops.find((o) => o.tag === "claude-alarm-on")!;
-      assert.notEqual(alarm.color, "#555560", `frame ${frame}`);
+      assert.ok(alarm.kind === "rect" && alarm.color !== "#555560", `frame ${frame}`);
       assert.equal(ops.filter((o) => o.tag === "alert-glow").length, 4);
     }
   });
@@ -79,7 +80,7 @@ describe("art", () => {
       for (let frame = 0; frame < 30; frame += 1) {
         for (const op of art(sceneOf(mode), { ...base, frame, connected: false })) {
           assert.ok(op.x >= 0 && op.y >= 0 && op.x < WIDTH && op.y <= HEIGHT, `${mode} ${JSON.stringify(op)}`);
-          if (op.kind === "rect") {
+          if (op.kind !== "text") {
             assert.ok(op.x + op.w <= WIDTH && op.y + op.h <= HEIGHT, `${mode} ${JSON.stringify(op)}`);
           }
         }
@@ -108,5 +109,57 @@ describe("demo", () => {
     assert.equal(demoScene(12_000).mode, "CODEX_BUILDING"); // alert over, codex still works
     assert.equal(demoScene(12_500).mode, "SUCCESS");
     assert.equal(demoScene(16_500).mode, "IDLE");
+  });
+});
+
+describe("sprites", () => {
+  test("every pose of both agents is a 12 x 22 frame with real pixels", () => {
+    for (const agent of ["codex", "claude"] as const) {
+      for (const pose of POSES) {
+        const s = SPRITES[`${agent}/${pose}`]!;
+        assert.equal(s.w, CHAR_W);
+        assert.equal(s.h, CHAR_H);
+        assert.equal(s.px.length, CHAR_W * CHAR_H);
+        assert.ok(s.px.filter((p) => p !== null).length > 60, `${agent}/${pose}`);
+        assert.ok(s.px.every((p) => p === null || /^#[0-9a-f]{6}$/.test(p)));
+      }
+    }
+  });
+
+  test("poses differ, and the two agents look different", () => {
+    for (const agent of ["codex", "claude"] as const) {
+      const frames = new Set(POSES.filter((p) => p !== "nod").map((p) => JSON.stringify(SPRITES[`${agent}/${p}`]!.px)));
+      assert.equal(frames.size, POSES.length - 1);
+    }
+    assert.notDeepEqual(SPRITES["codex/rest"]!.px, SPRITES["claude/rest"]!.px);
+    assert.notDeepEqual(SPRITES["codex/rest"]!.px, SPRITES["codex/nod"]!.px);
+  });
+
+  test("every sprite the scenes use exists", () => {
+    for (const mode of ["IDLE", "CODEX_BUILDING", "CLAUDE_RUNNING", "CLAUDE_ALERT", "SUCCESS"] as SceneMode[]) {
+      for (const focus of ["codex", "claude"] as const) {
+        for (let frame = 0; frame < 12; frame += 1) {
+          for (const op of art(sceneOf(mode, focus), { ...base, frame })) {
+            if (op.kind === "sprite") {
+              const s = SPRITES[op.name];
+              assert.ok(s, op.name);
+              assert.equal(op.w, s.w);
+              assert.equal(op.h, s.h);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  test("motions per scene", () => {
+    const t = (mode: SceneMode, frame = 0, focus?: "codex" | "claude") => tags(art(sceneOf(mode, focus), { ...base, frame }));
+    assert.ok(t("IDLE").has("codex-chin") && t("IDLE").has("codex-blueprint") && t("IDLE").has("claude-fold"));
+    assert.ok(t("CODEX_BUILDING", 0).has("codex-type0") && t("CODEX_BUILDING", 1).has("codex-type1"));
+    assert.ok(t("CODEX_BUILDING").has("claude-fold"));
+    assert.ok(t("CLAUDE_ALERT").has("codex-worried") && t("CLAUDE_ALERT").has("claude-head"));
+    assert.ok(t("CLAUDE_ALERT", 0, "codex").has("codex-head"));
+    assert.ok(t("SUCCESS", 0).has("codex-rest") && t("SUCCESS", 3).has("codex-nod"));
+    assert.ok(t("SUCCESS").has("claude-cheer"));
   });
 });
