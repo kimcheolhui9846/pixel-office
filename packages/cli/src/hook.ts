@@ -14,7 +14,8 @@
  */
 import { appendFileSync, mkdirSync } from "node:fs";
 import { request } from "node:http";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEADLINE_MS = 500;
 const STDIN_LIMIT = 1024 * 1024;
@@ -151,6 +152,13 @@ async function main(): Promise<void> {
   if (event === null) {
     note(`${hookEvent} -> ignored`);
     return;
+  }
+  if (event.type === "start" && process.env.ORCA_WORKTREE_ID) {
+    // inside an Orca terminal: make sure the worktree's office tab is open (step 8)
+    const { launchOrcaOpen } = await import("./orca.js");
+    const cliPath = join(dirname(fileURLToPath(import.meta.url)), "cli.js");
+    const launched = launchOrcaOpen({ env: process.env, home, cliPath, now: Date.now() });
+    note(`orca-open ${launched ? "launched" : "skipped"}`);
   }
   const info = readServerInfo(home);
   if (info === null) {

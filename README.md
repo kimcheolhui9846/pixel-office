@@ -54,6 +54,16 @@ code --extensionDevelopmentPath=packages/vscode .
 
 자세한 내용은 `docs/DESIGN.md` 10절에 있다.
 
+### Orca
+
+Orca의 터미널에서 Claude나 Codex에게 요청하면, 에이전트 훅이 그 worktree의 사무실 탭을 Orca 브라우저에 연다. 이미 열려 있으면 그대로 두고, 서버가 없으면 띄운다. 먼저 `init`으로 훅을 넣고 Orca를 다시 시작해야 한다. Orca는 시작할 때 사용자 설정을 복사한다. Codex는 Orca 안에서 `/hooks`로 다시 신뢰해야 한다.
+
+```bash
+npx pixel-office orca-open   # Orca 터미널에서 직접 열기
+```
+
+`PIXEL_OFFICE_ORCA_OPEN=0`이면 자동으로 열지 않는다. 자세한 내용은 `docs/DESIGN.md` 11절에 있다.
+
 ### Claude Code와 Codex 연결 (`init`, `uninit`)
 
 ```bash

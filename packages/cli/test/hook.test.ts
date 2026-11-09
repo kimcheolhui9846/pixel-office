@@ -31,6 +31,9 @@ after(() => {
 /** Runs the built hook with HOME, USERPROFILE and PIXEL_OFFICE_HOME in temp folders. */
 function runHook(stdin: string | Buffer, home: string, extraEnv: Record<string, string> = {}, args = ["claude"]): Promise<Run> {
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: root, USERPROFILE: root, PIXEL_OFFICE_HOME: home, ...extraEnv };
+  if (!("ORCA_WORKTREE_ID" in extraEnv)) {
+    delete env.ORCA_WORKTREE_ID;
+  }
   if (!("PIXEL_OFFICE_DEBUG" in extraEnv)) {
     delete env.PIXEL_OFFICE_DEBUG;
   }
