@@ -340,7 +340,7 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 ### 10.4 확인하지 못한 것
 
 - 원격(WSL, SSH) 창. 경로 넘기기와 `asExternalUri`는 코드만 있다.
-- `.vsix` 패키지와 마켓플레이스 배포. 지금 확장은 저장소의 `node_modules`(워크스페이스 링크)에서 core와 cli를 찾으므로 저장소 안에서만 돈다. 패키지로 만들려면 core, ui, cli와 `ws`를 확장 폴더 안에 넣어야 한다.
+- 마켓플레이스 배포. (`.vsix`는 14.3에서 해결)
 - (참고) Orca는 VS Code 확장을 싣지 않는다(1절). Orca는 8단계에서 내장 브라우저 탭으로 연다.
 
 ## 11. Orca 자동 열기 (8단계)
@@ -584,3 +584,13 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 ### 14.2 README
 
 설치(새 PC), VS Code, Orca, 브라우저, 명령, 업데이트, 한계(훅 신호로 정하는 것과 추정하는 것), 완료 기준 점검, CPU, 보안을 README 한 곳에 모았다. 근거는 이 문서의 각 절과 `screenshots/`를 가리킨다.
+
+### 14.3 `.vsix` 패키지 (`packages/vscode/scripts/package.mjs`)
+
+- 저장소의 `node_modules/@pixel-office/*`는 워크스페이스 링크라서 vsix에 그대로 담을 수 없다. 스크립트가 `packages/vscode/dist/package`에 확장(`dist/src`, `package.json`, README, LICENSE)과 빌드된 core(`dist/src`), cli(`dist/src`), ui(`dist/web`), `ws`를 복사하고 그 폴더에서 `vsce package`를 돌린다.
+- `vsce --no-dependencies`는 node_modules를 통째로 빼므로 쓰지 않는다. 의존성 목록을 남겨 두면 vsce가 `npm list --production`으로 복사본을 찾아 넣는다.
+- 패키징 도구는 `@vscode/vsce` 4.1.0(고정, 개발 의존성)이다. Node 22 이상이 필요해서 CI는 Node 24에서만 패키징한다. 서명용 `@vscode/vsce-sign`의 설치 스크립트는 허용하지 않았다(패키징에는 필요 없음).
+- 결과: `pixel-office-0.0.1.vsix`, 파일 68개, 약 134KB.
+- **실제 확인 (2026-11-09, VS Code 1.145.2):**
+  - vsix를 저장소 밖 폴더에 풀어, 그 안의 cli로 서버를 띄웠다. 화면 파일 경고 없이 떴고, 확장 위치에서 core와 cli를 찾았다.
+  - 사용자 VS Code를 건드리지 않도록 임시 `--user-data-dir`, `--extensions-dir`에 설치하고, `D:\aaa\skill_kit_kch`를 연 새 창에서 확장이 사무실 탭을 자동으로 열었다. 9c 화면에 이 개발 세션(Claude)이 작업 구역에 보였다. 캡처: `screenshots/step10-vscode-vsix.png`.

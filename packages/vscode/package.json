@@ -6,6 +6,10 @@
   "publisher": "kimcheolhui9846",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kimcheolhui9846/pixel-office.git"
+  },
   "type": "commonjs",
   "main": "./dist/src/extension.js",
   "engines": {
@@ -43,7 +47,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsc -p tsconfig.json && node ../../scripts/test.mjs dist/test"
+    "test": "tsc -p tsconfig.json && node ../../scripts/test.mjs dist/test",
+    "package": "node scripts/package.mjs"
   },
   "devDependencies": {
     "@types/vscode": "1.90.0"
