@@ -536,3 +536,46 @@ describe("static files and health", () => {
     assert.equal(injectToken("<head><title>x</title></head>", "ab"), '<head>\n    <meta name="pixel-office-token" content="ab" /><title>x</title></head>');
   });
 });
+
+describe("WebSocket /ws?workspace= (step 6)", () => {
+  test("each client sees only the sessions of its working folder", async () => {
+    const scoped = await startServer({ port: 0, home: join(root, "home-workspace") });
+    const enc = encodeURIComponent;
+    const repo = await open(scoped.port, `${scoped.token}&workspace=${enc("D:/aaa/pixel-office")}`);
+    const other = await open(scoped.port, `${scoped.token}&workspace=${enc("C:\\Users\\me\\.claude")}`);
+    const all = await open(scoped.port, scoped.token);
+    try {
+      // Codex in the repo (WSL spelling), Claude elsewhere
+      assert.equal((await post(scoped, event({ sessionId: "c1", cwd: "/mnt/d/aaa/pixel-office/packages" }))).status, 204);
+      assert.equal((await post(scoped, event({ agent: "claude", sessionId: "k1", cwd: "C:\\Users\\me\\.claude", type: "waiting" }))).status, 204);
+
+      const mine = await repo.until((s) => s.scene.desks.codex === "working");
+      assert.equal(mine.scene.mode, "CODEX_BUILDING");
+      assert.equal(mine.scene.desks.claude, "idle");
+      assert.deepEqual(mine.sessions.map((s) => s.sessionId), ["c1"]);
+
+      const theirs = await other.until((s) => s.scene.desks.claude === "waiting");
+      assert.equal(theirs.scene.desks.codex, "idle");
+      assert.deepEqual(theirs.sessions.map((s) => s.sessionId), ["k1"]);
+
+      const everything = await all.until((s) => s.sessions.length === 2);
+      assert.equal(everything.scene.mode, "CLAUDE_ALERT");
+
+      // the Claude event did not change the repo office, so it got nothing new
+      assert.ok(repo.messages.every((m) => m.sessions.every((s) => s.sessionId === "c1")));
+    } finally {
+      repo.close();
+      other.close();
+      all.close();
+      await scoped.close();
+    }
+  });
+
+  test("a bad workspace is refused with 400", async () => {
+    const tooLong = "x".repeat(1025);
+    for (const value of ["", "%20%20", encodeURIComponent(tooLong), "a%0Ab"]) {
+      const result = await live(server.port, { token: `${server.token}&workspace=${value}` });
+      assert.deepEqual("status" in result ? result.status : "open", 400, value.slice(0, 20));
+    }
+  });
+});

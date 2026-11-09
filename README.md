@@ -30,6 +30,17 @@ npx pixel-office simulate --loops 1 # 다른 터미널에서: 데모 이벤트�
 
 `start`가 출력한 `http://127.0.0.1:47821/`을 브라우저로 연다. 서버 정보(`server.json`)는 `~/.pixel-office`에 쓰며, `PIXEL_OFFICE_HOME`으로 폴더를 바꿀 수 있다. 보안 설계는 `docs/DESIGN.md` 6절에 있다.
 
+### 작업 폴더 하나의 사무실
+
+사무실 하나는 작업 폴더 하나(Orca worktree, VS Code 워크스페이스)를 보여 준다. 그 폴더나 하위 폴더에서 일하는 Codex와 Claude만 나온다.
+
+```bash
+npx pixel-office url              # 현재 폴더의 사무실 주소, 예: http://127.0.0.1:47821/?workspace=D:/work/repo
+npx pixel-office url D:\work\repo # 다른 폴더
+```
+
+`?workspace` 없이 열면 모든 폴더의 에이전트를 합쳐서 보여 준다. `C:\...`, `c:/...`, WSL의 `/mnt/c/...`는 같은 폴더로 본다. 자세한 내용은 `docs/DESIGN.md` 9절에 있다.
+
 ### Claude Code와 Codex 연결 (`init`, `uninit`)
 
 ```bash

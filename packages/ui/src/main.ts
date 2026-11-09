@@ -6,7 +6,7 @@
  * the token the server put in a meta tag and follows the server's WebSocket (`/ws`),
  * reconnecting with exponential backoff and showing the "not connected" banner meanwhile.
  */
-import { demoScene, type Scene } from "@pixel-office/core";
+import { demoScene, type Scene, workspaceName } from "@pixel-office/core";
 
 import { art, HEIGHT, type Op, WIDTH } from "./art.js";
 import { backoffMs } from "./backoff.js";
@@ -24,6 +24,11 @@ const demo = params.has("demo");
 // cmd.exe, which runs orca.cmd, would cut the URL there)
 const at = params.get("demo");
 const frozenAt = at ? Number(at) : undefined;
+// `?workspace=<folder>`: this office shows only the agents working in that folder (step 6)
+const workspace = params.get("workspace")?.trim() || null;
+if (workspace !== null) {
+  document.title = `Pixel Office · ${workspaceName(workspace)}`;
+}
 const started = performance.now();
 
 let live: Scene = IDLE_SCENE;
@@ -104,7 +109,8 @@ function follow(first: string) {
     open();
   };
   const open = () => {
-    const socket = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
+    const scope = workspace === null ? "" : `&workspace=${encodeURIComponent(workspace)}`;
+    const socket = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}${scope}`);
     socket.onmessage = (message: MessageEvent) => {
       try {
         const data = JSON.parse(String(message.data)) as { scene?: unknown };

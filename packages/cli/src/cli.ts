@@ -3,6 +3,7 @@
  * `pixel-office` command line.
  *
  *   pixel-office start [--port N]                   run the server in the foreground
+ *   pixel-office url [folder]                       print the office address for one working folder
  *   pixel-office simulate [--loops N] [--speed X]   post the demo events to a running server
  *   pixel-office init [--agent A] [--dry-run] [--yes] [--windows-home P]   add our hooks
  *   pixel-office uninit [--agent A] [--dry-run] [--yes]   remove them again
@@ -11,11 +12,11 @@
  */
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import { DEMO_CWD, DEMO_LOOP_MS, DEMO_SCRIPT } from "@pixel-office/core";
+import { DEMO_CWD, DEMO_LOOP_MS, DEMO_SCRIPT, officeUrl } from "@pixel-office/core";
 import {
   DEFAULT_PORT,
   homeDir,
@@ -30,6 +31,7 @@ import { defaultIo, runInit } from "./init.js";
 
 const USAGE = `사용법:
   pixel-office start [--port N]                     서버를 실행합니다 (기본 포트 ${DEFAULT_PORT}, Ctrl+C로 종료)
+  pixel-office url [폴더]                          그 작업 폴더 전용 사무실 주소를 출력합니다 (기본: 현재 폴더)
   pixel-office simulate [--loops N] [--speed X]     실행 중인 서버에 데모 이벤트를 보냅니다 (기본 1회, 1배속)
   pixel-office init [--dry-run] [--yes]             에이전트 사용자 설정에 훅을 넣습니다
                                                     Claude Code: ~/.claude/settings.json, Codex: ~/.codex/hooks.json
@@ -46,6 +48,21 @@ const NO_SERVER = "실행 중인 Pixel Office 서버가 없습니다. 먼저 `pi
 
 class UsageError extends Error {}
 
+/** Prints the address of the office for one folder; the port comes from a running server. */
+function url(args: string[]): number {
+  const { positionals } = parseArgs({ args, options: {}, allowPositionals: true, strict: true });
+  if (positionals.length > 1) {
+    throw new UsageError("폴더는 하나만 줄 수 있습니다.");
+  }
+  const folder = resolve(positionals[0] ?? process.cwd());
+  const info = readServerInfo(homeDir());
+  console.log(officeUrl(info?.port ?? DEFAULT_PORT, folder));
+  if (info === null) {
+    console.error(NO_SERVER);
+  }
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   switch (command) {
@@ -53,6 +70,8 @@ async function main(argv: string[]): Promise<number> {
       return start(rest);
     case "simulate":
       return simulate(rest);
+    case "url":
+      return url(rest);
     case "init":
     case "uninit":
       return init(command, rest);

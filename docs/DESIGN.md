@@ -276,3 +276,37 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 - **수정:** Windows 훅 명령을 래퍼 경로 하나로 바꿨다(8.3). 테스트는 래퍼를 `cmd.exe /C "..."`와 `powershell.exe -Command`로 실제 실행해 인자와 stdin이 그대로 전달되고 출력이 없는지 확인한다.
 - **3차: 동작 확인.** 래퍼 방식을 적용하고(`~/.codex/hooks.json`), Orca 터미널에서 `CODEX_HOME`을 지운 채 Codex를 열어 바뀐 훅 6개를 신뢰했다. 짧은 작업 하나에 Codex 책상이 작업 중 → 완료 → 약 4초 뒤 쉬는 중으로 바뀌었고, "Hook failed"는 없었다. 캡처: `screenshots/step5-codex-working.png`, `screenshots/step5-codex-success.png`.
 - **Orca 계정 폴더는 앱 시작 때만 갱신된다.** `init` 뒤에도 Orca 안의 Codex는 예전 훅을 쓰다가, Orca를 다시 시작한 뒤에 새 훅을 받았다. 그래서 `init` 뒤에는 Orca를 다시 시작하고, Orca 안의 Codex에서도 `/hooks`로 신뢰해야 한다.
+
+## 9. 작업 환경 단위 사무실 (6단계)
+
+### 9.1 요구
+
+사용자 결정(2026-11-09): 사무실은 에이전트별 전체 합산이 아니라 **작업 환경 하나**를 보여 준다. Orca worktree나 VS Code 워크스페이스 폴더 하나에서 Codex와 Claude를 함께 쓰므로, 그 폴더의 화면에는 그 폴더에서 일하는 두 에이전트만 나온다. 이전에는 모든 세션을 합쳐서, 다른 폴더의 Claude 세션이 같은 책상을 덮어썼다(7.7, 8.6에서 관찰).
+
+### 9.2 설계 (`packages/core/src/workspace.ts`)
+
+- **기준:** 작업 폴더(루트)다. 세션의 `cwd`가 루트 자신이거나 그 안이면 그 사무실에 속한다. 하위 폴더에서 에이전트를 실행해도 같은 사무실이고, 이름이 비슷한 형제 폴더(`repo-old`)는 다른 사무실이다.
+- **경로 정규화(`normalizePath`):** 같은 폴더의 여러 표기를 하나로 만든다.
+  - `\`를 `/`로 바꾸고, 겹친 `/`와 끝의 `/`를 정리한다.
+  - WSL 마운트 `/mnt/c/...`는 `c:/...`로 바꾼다.
+  - Windows에서 본 WSL(`\\wsl.localhost\<배포판>\...`, `\\wsl$\...`)은 Linux 경로 `/...`로 바꾼다.
+  - 드라이브 경로는 전부 소문자로 바꾸고(Windows는 대소문자 무시), Linux 경로는 그대로 둔다.
+- **서버:** 서버는 하나다. WebSocket `/ws?token=..&workspace=<폴더>`로 연결한 화면은 그 폴더의 세션만으로 계산한 장면과 세션 목록을 받는다. `workspace`가 없으면 예전처럼 전부 받는다.
+  - 상태가 바뀌면 요청된 폴더마다 한 번씩 계산하고, 내용이 바뀐 화면에만 보낸다. 다른 폴더의 이벤트는 그 화면에 아무것도 보내지 않는다.
+  - `workspace`가 비었거나 1024자를 넘거나 제어 문자가 있으면 400으로 거절한다.
+- **화면:** 주소 `/?workspace=<폴더>`를 읽어 WebSocket에 넘기고, 탭 제목을 `Pixel Office · <폴더 이름>`으로 바꾼다.
+- **주소 만들기:** `pixel-office url [폴더]`(기본은 현재 폴더)가 실행 중인 서버의 포트로 주소를 출력한다. 주소에는 매개변수가 하나뿐이다. Orca CLI가 cmd.exe를 거쳐서 `&`에서 주소가 잘리기 때문이다. `/`와 `:`는 읽기 쉽게 그대로 두고, 공백, `&`, `#` 같은 문자만 인코딩한다.
+
+### 9.3 실제 확인 (2026-11-09, Orca 1.4.253, Windows)
+
+- Orca 내장 브라우저에 탭 두 개를 열었다. 하나는 Codex가 일하는 임시 폴더(`.../scratchpad/po-codex`), 다른 하나는 이 확인을 하던 Claude 세션의 폴더(`D:\aaa\skill_kit_kch`)다.
+- Codex에게 10초짜리 명령을 시키는 동안 같은 시각에 두 탭을 캡처했다.
+  - Codex 폴더 탭: Codex 작업 중, Claude 쉬는 중
+  - Claude 폴더 탭: Codex 쉬는 중, Claude 작업 중
+- 캡처: `screenshots/step6-workspace-codex-folder.png`, `screenshots/step6-workspace-claude-folder.png`.
+
+### 9.4 확인하지 못한 것
+
+- WSL 안에서 실행한 에이전트(`/mnt/...`, `/home/...`)가 Windows에서 연 사무실과 맞는지. 테스트는 정규화 함수로만 했다.
+- 같은 폴더에서 같은 에이전트 세션이 두 개일 때의 표시. 지금은 더 급한 상태(문제 발생 > 응답 대기 > 작업 중 > 완료)를 책상에 그린다.
+- Orca가 worktree마다 자동으로 탭을 여는 부분(8단계)과 VS Code 웹뷰(7단계). 지금은 `pixel-office url`로 주소를 만들어 직접 연다.
