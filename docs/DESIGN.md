@@ -100,3 +100,122 @@
 - 실제 서버(`pixel-office start`)의 화면을 열고 `simulate`를 보내자 WebSocket으로 장면이 바뀌었다(`docs/screenshots/step3-live-alert.png`).
 - 서버를 끄면 "연결 안 됨" 배너가 뜬다(`step3-disconnected.png`).
 - 서버를 다시 켜면 토큰이 새로 만들어진다. 처음에는 열려 있던 화면이 예전 토큰을 계속 써서 다시 연결하지 못했다. 그래서 화면이 다시 연결하기 전에 같은 서버의 `index.html`을 새로 받아 현재 토큰을 읽도록 고쳤다(`packages/ui/src/token.ts`). 고친 뒤 재시작 후 다시 연결되어 상태를 받는 것을 확인했다.
+
+## 7. Claude Code 훅 (4단계)
+
+공식 문서 https://code.claude.com/docs/en/hooks 를 2026-11-09에 읽고 그 내용에 맞췄다. 아래에서 "문서"는 그 문서에서 확인한 것이고 "추정"은 우리가 짐작으로 정한 것이다. 실제 Claude Code 세션에서 확인하는 일은 사용자가 `init`을 승인한 뒤에 한다.
+
+### 7.1 대응표 (`packages/core/src/claude.ts`, 순수 함수 `fromClaudeHook`)
+
+| Claude Code 훅 | 사무실 이벤트 | detail |
+|---|---|---|
+| `UserPromptSubmit` | `start` | 없음. 프롬프트는 보내지 않는다 |
+| `PreToolUse` | `tool_start` | 도구 이름(`Bash`, `Edit` 등). 40자에서 자른다 |
+| `PostToolUse` | `tool_end` | 도구 이름 |
+| `PostToolUse` 중 도구가 `Bash`나 `PowerShell`이고 명령이 테스트 실행으로 보이는 것 | `success` | `test` (추정, 7.2) |
+| `PostToolUseFailure` | `error` | `Bash`와 `PowerShell`은 `error` 첫 줄 `Exit code N`에서 읽은 `exit N`. 그 줄이 없거나 다른 도구면 도구 이름 |
+| `Notification` 중 `permission_prompt`, `agent_needs_input`, `elicitation_dialog`, `elicitation_url_dialog` | `waiting` | 없음 |
+| 그 밖의 `Notification`(`idle_prompt`, `auth_success`, `agent_completed`, `quota_*` 등) | 보내지 않음 | |
+| `Stop` | `stop` | 없음 |
+| `StopFailure` | `error` | API 오류 종류(`rate_limit` 등) |
+| 그 밖의 모든 훅(`SessionStart`, `SessionEnd`, `SubagentStop` 등) | 보내지 않음 | |
+
+- `sessionId`는 `session_id`, `cwd`는 `cwd`, `agent`는 `claude`다. `ts`에는 지금 시각을 넣지만 서버가 자기 시계로 바꾼다(6절).
+- `session_id`나 `cwd`가 없거나, 너무 길거나(200자, 1024자), 제어 문자가 들어 있으면 아무것도 보내지 않는다. 서버가 어차피 거부할 이벤트이기 때문이다.
+- 문서에서 확인한 것:
+  - 공통 필드 `session_id`, `cwd`, `hook_event_name`.
+  - `PreToolUse`와 `PostToolUse`의 `tool_name`, `tool_input`.
+  - `PostToolUse`는 도구가 **성공했을 때만** 온다.
+  - `PostToolUseFailure`의 `error`는 Bash와 PowerShell에서 첫 줄이 `Exit code N`이다. 셸을 시작하지도 못했을 때는 그 줄이 없다.
+  - `Notification`의 `notification_type` 값 목록과 각 값의 뜻.
+  - `StopFailure`의 `error`는 오류 종류(`rate_limit`, `overloaded` 등)다.
+- `waiting`을 그 네 가지로 정한 이유: 문서의 설명을 보면 사람이 답하기 전에는 일이 진행되지 않는 것들이다(도구 권한, 백그라운드 세션이나 팀원의 입력 대기, MCP 입력 양식, MCP가 연 URL). `idle_prompt`는 "Claude가 60초 전에 답을 끝냈는데 사용자가 아직 입력하지 않았다"는 뜻이라 기다림이 아니라 쉬는 상태다.
+- Windows에 Git Bash가 없으면 Claude Code는 `Bash` 대신 `PowerShell` 도구를 쓴다(문서). 그래서 `PowerShell`도 셸 도구로 함께 다룬다.
+
+### 7.2 추정인 것
+
+- **테스트 명령 판정.** `PostToolUse`에는 종료 코드가 없다. 하지만 성공했을 때만 오므로, 명령이 테스트 실행처럼 보이면 "테스트 통과"(`success`, `test`)로 본다.
+  - 명령을 `;`, `&&`, `||`, `|`, 줄바꿈으로 나눈다.
+  - 앞의 `VAR=값`과 감싸는 명령을 벗긴다: `env`, `sudo`, `time`, `npx`, `bunx`, `pnpx`, `uv run`, `poetry run`, `pdm run`, `pnpm exec`, `pnpm dlx`, `yarn exec`, `yarn dlx`, `npm exec`, `python -m`, `python3 -m`, `py -m`.
+  - 남은 것이 다음 중 하나면 테스트로 본다.
+    - `pytest`, `py.test` (`python -m pytest`, `uv run pytest` 포함)
+    - `npm test`, `npm t`, `pnpm test`, `yarn test`, `bun test`, `npm run test`, `npm run test:이름`, `yarn test:이름`, `pnpm test:이름`
+    - `vitest`, `jest` (`npx vitest`, `pnpm vitest` 등 포함)
+    - `go test`, `cargo test`
+    - `node ... --test`
+    - `mvn ... test`, `./mvnw test`, `gradle ... test`, `./gradlew :모듈:test`
+- 이 판정은 틀릴 수 있다. 다른 이름의 스크립트로 테스트를 돌리면 놓치고, `test` 스크립트가 다른 일을 해도 테스트로 본다. `npm test | tail`처럼 파이프를 쓰면 성공 여부는 마지막 명령의 것이다.
+- 명령 글자는 훅 안에서만 읽고 보내지 않는다. 서버로 가는 것은 `test`라는 이름표뿐이다.
+- `waiting`으로 보는 알림 종류도 문서 설명을 읽고 우리가 고른 것이다.
+
+### 7.3 훅 실행기 (`packages/cli/src/hook.ts`)
+
+- `node <절대 경로>/hook.js claude`로 실행된다. 하는 일은 다음과 같다.
+  1. stdin을 1 MiB까지 읽는다. 넘으면 포기한다.
+  2. `fromClaudeHook`로 이벤트를 만든다.
+  3. `PIXEL_OFFICE_HOME` 또는 `~/.pixel-office`의 `server.json`을 읽는다.
+  4. `http://127.0.0.1:<포트>/event`에 토큰 헤더와 `Content-Type: application/json`을 붙여 보낸다.
+- 전체 시간 제한은 500ms다. `AbortController`와 `unref()`한 타이머로 요청을 끊고 끝낸다.
+- **종료 코드는 언제나 0이고 stdout과 stderr는 언제나 비어 있다.** 서버가 없거나, `server.json`이 깨졌거나, 요청이 거부되거나, stdin이 엉망이거나, 시간이 넘어도 조용히 끝난다. 경고와 예기치 않은 예외도 삼킨다. core 모듈은 동적 import로 불러서 설치가 깨져 있어도 아무것도 출력하지 않는다.
+- **stdout을 비우는 이유.** 문서에 따르면 `UserPromptSubmit`, `SessionStart` 등에서는 훅의 stdout이 Claude가 읽는 맥락에 들어간다. 우리 훅이 무언가를 출력하면 Claude의 대화에 끼어든다. 0이 아닌 종료 코드는 훅 오류로 보이고, 2는 일부 이벤트에서 동작을 막는다. 그래서 출력도 오류도 내지 않는다.
+- 빨리 뜨도록 `ws`를 포함한 서버 코드는 불러오지 않는다. `@pixel-office/core/home`(Node 기본 모듈만 씀)과 브라우저용 core만 쓴다. 이 PC에서 서버가 없을 때 약 70ms, 응답하지 않는 서버에서는 약 580ms(500ms 제한 포함) 걸렸다.
+- `PIXEL_OFFICE_DEBUG=1`이면 `<home>/hook-debug.log`에 한 줄씩 남긴다(훅 이름, 만든 이벤트 종류, 결과). 페이로드 내용은 남기지 않는다. 이때도 stdout과 stderr에는 쓰지 않는다.
+
+### 7.4 async와 timeout
+
+- 문서에서 확인한 것: command 훅에 `"async": true`를 주면 백그라운드에서 돌고 Claude는 기다리지 않는다. `timeout`은 초 단위이고 기본값은 600초인데, async 훅에는 적용되지 않는다.
+- 우리 항목은 `"async": true`, `"timeout": 3`이다. async 덕분에 에이전트가 느려지지 않는다. timeout은 async를 모르는 Claude Code에서만 의미가 있고, 훅이 500ms 안에 스스로 끝나므로 닿을 일이 없다.
+- async의 대가: 훅들이 동시에 돌아서 이벤트가 서버에 도착하는 순서가 바뀔 수 있다. 빠른 도구의 `tool_start`와 `tool_end`가 뒤바뀌어도 둘 다 working이라 화면은 같다. `Stop`은 Claude가 답을 다 쓴 뒤에 오므로 앞선 도구 이벤트보다 먼저 도착할 일은 드물다(추정).
+- 비대화 모드(`claude -p`)에서는 세션이 끝날 때 남은 async 훅을 끝낸다(문서). 마지막 이벤트가 빠질 수 있다.
+
+### 7.5 `pixel-office init` / `uninit`
+
+- 대상은 Claude Code 사용자 설정 `~/.claude/settings.json`이다. 문서에 따르면 `CLAUDE_CONFIG_DIR`이 설정 폴더를 옮기므로, 그 값이 있으면 `$CLAUDE_CONFIG_DIR/settings.json`을 고친다. Windows에서 `~`는 `%USERPROFILE%`이다.
+- 7.1의 이벤트 7개(`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Notification`, `Stop`, `StopFailure`)마다 `hooks.<이벤트>`에 matcher 없는(모두 받는) 그룹 하나를 덧붙인다.
+- **실행 형태는 exec form이다.**
+  - `command`에는 `process.execPath`(init을 실행한 node의 절대 경로)를, `args`에는 `[hook.js의 절대 경로, "claude"]`를 쓴다.
+  - 문서에 따르면 `args`가 있으면 Claude Code는 셸 없이 프로그램을 바로 실행한다.
+  - 셸 형태(`args` 없음)는 macOS와 Linux에서 `sh -c`, Windows에서 Git Bash, Git Bash가 없으면 PowerShell로 돈다. 셸마다 따옴표 규칙이 다르고, PowerShell은 따옴표로 시작하는 명령을 실행하지 않고 문자열로 출력한다(문서의 "PowerShell started no program").
+  - exec form에는 셸이 없으므로 `C:\Program Files\nodejs\node.exe`처럼 공백이 있는 경로도 따옴표 없이 그대로 쓰면 되고, Git Bash가 있든 없든 똑같이 돈다. 문서는 Windows에서 `command`가 `node.exe` 같은 진짜 실행 파일이어야 한다고 하는데 `process.execPath`가 그렇다.
+- **우리 항목 표시.** 따로 표시 필드를 두지 않고 인자로 알아본다. `args` 안에 경로가 `cli/dist/src/hook.js`로 끝나는 요소가 있고(구분자 `\`, `/` 모두) 바로 다음 요소가 `claude`면 우리 것이다. 누가 셸 형태로 고쳐 놓았을 때를 위해 `command` 문자열에 `cli/dist/src/hook.js claude`가 있어도 우리 것으로 본다. 다른 훅(Orca, skill kit 등)은 건드리지 않는다.
+- **병합 규칙.**
+  - 다른 키와 그 순서, 다른 훅을 모두 그대로 둔다. 원래 파일의 들여쓰기(기본 2칸), 줄바꿈(LF, CRLF), 마지막 줄바꿈, BOM을 따른다.
+  - 이미 같은 항목이 있으면 아무것도 바꾸지 않는다. 그래서 두 번 실행해도 결과가 같다.
+  - 저장소를 옮겼거나 다른 node로 실행해서 예전 항목이 있으면, 첫 예전 항목 자리에 새 항목을 넣고 나머지 예전 항목은 지운다.
+  - 설정 파일이 없으면 우리 훅만 담아 새로 만든다.
+  - JSON이 아니거나, 맨 바깥이 객체가 아니거나, `hooks`나 이벤트 값의 모양이 다르면 이유를 말하고 아무것도 바꾸지 않는다(종료 코드 1).
+- **흐름.**
+  1. 바뀌기 전과 후를 unified diff로 보여 준다. diff는 직접 만든 작은 줄 비교이고 의존성이 없다.
+  2. `--dry-run`이면 여기서 끝난다.
+  3. `--yes`가 없으면 터미널에서 "적용할까요? (y/N)"를 묻는다. 터미널이 아니면(파이프 등) 종료 코드 64로 끝나고 아무것도 쓰지 않는다.
+  4. 원래 파일을 `<pixel-office home>/backups/<시각>/claude-settings.json`에 바이트 그대로 복사한다. 시각은 `2026-11-09T01-02-03-456Z`처럼 콜론이 없는 UTC다.
+  5. 같은 폴더의 임시 파일에 쓰고 이름을 바꿔 원자적으로 덮어쓴다. 묻는 동안 파일이 바뀌었으면 쓰지 않는다.
+  6. 백업 경로를 출력한다.
+- **uninit**은 우리 항목만 지운다. 우리 항목을 지워서 비게 된 그룹, 이벤트 배열, `hooks` 객체만 지우고, 원래부터 비어 있던 것은 둔다. 그래서 init 뒤에 uninit을 하면 원래 파일과 바이트까지 같다(원래 파일이 위의 형식 규칙을 따를 때).
+  - 예외: 원래 `"hooks": {}`나 빈 이벤트 배열이 있었다면, init이 그 안을 채우고 uninit이 다시 비우면서 그 빈 껍데기까지 지운다.
+  - 백업은 init과 같은 방식으로 남긴다.
+- node나 저장소 위치가 바뀌면 `init`을 다시 실행해야 한다(예: nvm으로 node 버전을 바꾼 경우).
+
+### 7.6 WSL
+
+- 사용자는 두 PC 모두 WSL **mirrored networking**을 쓰기로 했다. 이 모드에서는 WSL과 Windows가 `127.0.0.1`을 함께 쓰므로, WSL 안의 Claude Code 훅이 Windows에서 도는 Pixel Office 서버에 바로 닿는다. `.wslconfig` 변경은 사용자의 승인을 받아 따로 한다.
+- 남는 문제는 `server.json`의 위치다. 서버는 Windows의 `%USERPROFILE%\.pixel-office`에 쓰는데, WSL의 `~`는 리눅스 홈이다. 그래서 WSL 안에서 `init`을 하면 훅이 `PIXEL_OFFICE_HOME=/mnt/c/Users/<이름>/.pixel-office`를 갖고 실행되게 한다. exec form에는 셸이 없으므로 `command`를 `/usr/bin/env`로 하고 `args`를 `["PIXEL_OFFICE_HOME=...", node 경로, hook.js 경로, "claude"]`로 쓴다.
+- WSL 판정: `WSL_DISTRO_NAME`이 있거나 `/proc/version`에 `microsoft`가 들어 있으면 WSL이다.
+- Windows 사용자 폴더는 `cmd.exe /c echo %USERPROFILE%`의 결과를 `wslpath -u`로 바꿔 찾는다. `--windows-home <경로>`로 직접 줄 수도 있다(`/mnt/c/Users/이름` 또는 `C:\Users\이름`). 찾지 못하면 `--windows-home`을 쓰라는 메시지를 내고 실패하며 아무것도 쓰지 않는다. 테스트는 판정과 폴더 찾기를 가짜 함수로 바꿔 끼운다.
+- 백업은 WSL 쪽 `~/.pixel-office/backups`에 남는다. 고치는 설정 파일이 WSL 쪽에 있기 때문이다.
+
+### 7.7 실제 세션 확인 (2026-11-09, Claude Code 2.1.319, Windows)
+
+- 실제 `~/.claude/settings.json`에 `init`을 적용하고, 서버와 Orca 브라우저를 켠 채 임시 폴더에서 `claude -p --model haiku`를 돌렸다. WebSocket으로 받은 장면 변화를 시각과 함께 기록했다.
+- 결과: 작업 중 → (셸 명령 `exit 3`) 문제 발생 → 작업 중 → (응답 완료) 완료. 완료는 약 3.8초 뒤 다음 장면으로 바뀌었다(holdMs 4초).
+- 따라서 이 버전은 `args`(exec form)와 `async`를 지원한다. 셸 형태로 바꿀 필요가 없다.
+- 이미 실행 중인 세션도 설정 변경을 바로 반영했다(이 확인을 하던 세션 자신이 이벤트를 보내기 시작했다).
+- 여러 Claude 세션이 책상 하나를 함께 쓴다. 한 세션이 끝나도 다른 세션이 일하고 있으면 "작업 중"으로 돌아간다. 설계대로이며, 세션 구분은 6단계에서 다룬다.
+- 캡처: `screenshots/step4-real-working.png`, `screenshots/step4-real-success.png`.
+
+### 7.8 확인하지 못한 것
+
+- "응답 대기" 장면. 비대화 모드에서는 권한 요청이 생기지 않았다.
+- "문제 발생" 장면의 실제 세션 캡처. 서버 기록으로는 확인했고, 그림은 3단계에서 확인했다.
+- async 훅의 순서 바뀜이 화면에 드러나는지.
+- 실제 WSL에서 `cmd.exe`와 `wslpath`로 폴더를 찾는 부분. 이 PC에서는 돌려 보지 않았고, 테스트는 가짜 함수를 쓴다.

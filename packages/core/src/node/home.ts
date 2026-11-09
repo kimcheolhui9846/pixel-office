@@ -1,11 +1,15 @@
 /**
  * The app's home folder and the `server.json` file that tells hooks and the CLI where the
- * running server is. Node only.
+ * running server is. Node only, with no dependencies beyond Node built-ins, so the Claude Code
+ * hook can load it quickly (`@pixel-office/core/home`).
  */
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+/** Header that carries the token on `POST /event`. */
+export const TOKEN_HEADER = "x-pixel-office-token";
 
 export interface ServerInfo {
   port: number;

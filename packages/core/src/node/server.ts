@@ -38,16 +38,15 @@ import {
   type Session,
   type Timing,
 } from "../state.js";
-import { homeDir, removeServerInfo, writeServerInfo } from "./home.js";
+import { homeDir, removeServerInfo, TOKEN_HEADER, writeServerInfo } from "./home.js";
 import { checkEvent } from "./validate.js";
 
-export { homeDir, readServerInfo, serverInfoPath, type ServerInfo } from "./home.js";
+export { homeDir, readServerInfo, serverInfoPath, type ServerInfo, TOKEN_HEADER } from "./home.js";
 export { checkEvent } from "./validate.js";
 
 export const DEFAULT_PORT = 47821;
 export const HOST = "127.0.0.1";
 export const BODY_LIMIT = 16 * 1024;
-export const TOKEN_HEADER = "x-pixel-office-token";
 export const TOKEN_META = "pixel-office-token";
 export const WS_PATH = "/ws";
 /** The page never sends anything; a larger client frame closes the connection. */

@@ -4,12 +4,15 @@
  *
  *   pixel-office start [--port N]                   run the server in the foreground
  *   pixel-office simulate [--loops N] [--speed X]   post the demo events to a running server
+ *   pixel-office init [--dry-run] [--yes] [--windows-home P]   add our hooks to Claude Code
+ *   pixel-office uninit [--dry-run] [--yes]         remove them again
  *
  * Messages for the user are Korean; code comments are English.
  */
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { DEMO_CWD, DEMO_LOOP_MS, DEMO_SCRIPT } from "@pixel-office/core";
@@ -23,12 +26,19 @@ import {
   TOKEN_HEADER,
 } from "@pixel-office/core/server";
 
+import { defaultIo, runInit } from "./init.js";
+
 const USAGE = `사용법:
   pixel-office start [--port N]                     서버를 실행합니다 (기본 포트 ${DEFAULT_PORT}, Ctrl+C로 종료)
   pixel-office simulate [--loops N] [--speed X]     실행 중인 서버에 데모 이벤트를 보냅니다 (기본 1회, 1배속)
+  pixel-office init [--dry-run] [--yes]             Claude Code 사용자 설정(~/.claude/settings.json)에 훅을 넣습니다
+                                                    바꿀 내용을 diff로 먼저 보여 주고, 확인한 뒤 백업하고 씁니다
+      --windows-home <경로>                         WSL에서: Windows 사용자 폴더 (예: /mnt/c/Users/이름)
+  pixel-office uninit [--dry-run] [--yes]           init이 넣은 훅만 지웁니다
 
 환경 변수:
-  PIXEL_OFFICE_HOME   server.json을 둘 폴더 (기본 ~/.pixel-office)`;
+  PIXEL_OFFICE_HOME   server.json과 백업을 둘 폴더 (기본 ~/.pixel-office)
+  CLAUDE_CONFIG_DIR   Claude Code 설정 폴더 (기본 ~/.claude)`;
 
 const NO_SERVER = "실행 중인 Pixel Office 서버가 없습니다. 먼저 `pixel-office start`를 실행하세요.";
 
@@ -41,6 +51,9 @@ async function main(argv: string[]): Promise<number> {
       return start(rest);
     case "simulate":
       return simulate(rest);
+    case "init":
+    case "uninit":
+      return init(command, rest);
     case undefined:
     case "help":
     case "--help":
@@ -184,6 +197,28 @@ async function simulate(args: string[]): Promise<number> {
   }
   console.log(`완료: 이벤트 ${sent}개를 보냈습니다.`);
   return 0;
+}
+
+async function init(mode: "init" | "uninit", args: string[]): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      "dry-run": { type: "boolean" },
+      yes: { type: "boolean", short: "y" },
+      "windows-home": { type: "string" },
+    },
+    strict: true,
+  });
+  const hookPath = join(dirname(fileURLToPath(import.meta.url)), "hook.js");
+  return runInit(
+    mode,
+    {
+      dryRun: values["dry-run"] === true,
+      yes: values.yes === true,
+      ...(values["windows-home"] !== undefined ? { windowsHome: values["windows-home"] } : {}),
+    },
+    defaultIo(hookPath),
+  );
 }
 
 main(process.argv.slice(2)).then(
