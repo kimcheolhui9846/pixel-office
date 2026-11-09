@@ -51,8 +51,7 @@ const ws = dirname(require.resolve("ws/package.json", { paths: [join(root, "pack
 copy(ws, join(modules, "ws"), ["package.json", "index.js", "wrapper.mjs", "browser.js", "lib", "LICENSE"]);
 
 // the stage holds only what ships; the file just tells vsce so
-writeFileSync(join(stage, ".vscodeignore"), "# everything in this folder ships
-");
+writeFileSync(join(stage, ".vscodeignore"), "# everything in this folder ships\n");
 
 const out = join(ext, `pixel-office-${pkg.version}.vsix`);
 const vsce = join(dirname(require.resolve("@vscode/vsce/package.json", { paths: [root] })), "vsce");
