@@ -41,6 +41,19 @@ npx pixel-office url D:\work\repo # 다른 폴더
 
 `?workspace` 없이 열면 모든 폴더의 에이전트를 합쳐서 보여 준다. `C:\...`, `c:/...`, WSL의 `/mnt/c/...`는 같은 폴더로 본다. 자세한 내용은 `docs/DESIGN.md` 9절에 있다.
 
+### VS Code 확장 (`packages/vscode`)
+
+VS Code 창을 폴더와 함께 열면 그 폴더의 사무실이 편집기 옆 탭에 자동으로 열린다. 서버가 없으면 확장이 띄운다(창을 닫아도 남는다). 명령 팔레트의 "Pixel Office: 사무실 열기"로 다시 열고, 설정 `pixelOffice.autoOpen`으로 자동 열기를 끈다.
+
+지금은 저장소 안에서 개발 창으로만 실행한다(패키지는 아직 없다):
+
+```bash
+npm run build
+code --extensionDevelopmentPath=packages/vscode .
+```
+
+자세한 내용은 `docs/DESIGN.md` 10절에 있다.
+
 ### Claude Code와 Codex 연결 (`init`, `uninit`)
 
 ```bash

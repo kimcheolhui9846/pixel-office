@@ -309,4 +309,36 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 
 - WSL 안에서 실행한 에이전트(`/mnt/...`, `/home/...`)가 Windows에서 연 사무실과 맞는지. 테스트는 정규화 함수로만 했다.
 - 같은 폴더에서 같은 에이전트 세션이 두 개일 때의 표시. 지금은 더 급한 상태(문제 발생 > 응답 대기 > 작업 중 > 완료)를 책상에 그린다.
-- Orca가 worktree마다 자동으로 탭을 여는 부분(8단계)과 VS Code 웹뷰(7단계). 지금은 `pixel-office url`로 주소를 만들어 직접 연다.
+- Orca가 worktree마다 자동으로 탭을 여는 부분(8단계). 지금은 `pixel-office url`로 주소를 만들어 직접 연다. VS Code는 10절의 확장이 연다.
+
+## 10. VS Code 확장 (7단계, `packages/vscode`)
+
+### 10.1 동작
+
+- VS Code 창이 폴더를 연 채로 시작하면(`onStartupFinished`) 첫 작업 폴더의 사무실을 편집기 옆 탭에 연다. 포커스는 편집기에 남는다. 설정 `pixelOffice.autoOpen`(기본 켜짐)으로 끌 수 있다.
+- 명령 "Pixel Office: 사무실 열기"로 다시 연다. 작업 폴더가 여럿이면 고르게 한다. 같은 폴더의 탭이 이미 있으면 그 탭을 앞으로 가져온다.
+- 탭 제목은 `Pixel Office · <폴더 이름>`이다.
+
+### 10.2 설계
+
+- **같은 UI 번들:** 웹뷰는 사무실을 직접 그리지 않는다. 웹뷰 안에 iframe 하나를 두고, 로컬 서버가 주는 `/?workspace=<폴더>` 페이지를 띄운다. Orca 브라우저와 같은 페이지이고, iframe 안 페이지의 Origin이 서버 자신의 것이라 서버의 Origin 검사(6절)를 바꿀 필요가 없다. 토큰은 그 페이지가 서버의 HTML에서 읽으므로 웹뷰 HTML에는 비밀이 없다.
+- 웹뷰 페이지의 CSP는 `default-src 'none'; frame-src <서버 origin>; style-src 'unsafe-inline'`이다. 웹뷰 자체에는 스크립트가 없다. `enableScripts`는 켠다. 끄면 VS Code가 iframe에 거는 sandbox가 안쪽 페이지의 스크립트까지 막는다.
+- 주소는 `vscode.env.asExternalUri`를 거친다. 원격 창에서 포트 전달이 필요할 때를 위한 것이다.
+- 숨겨진 탭은 버리고(`retainContextWhenHidden: false`), 다시 보일 때 서버를 확인하고 새로 그린다. 숨긴 동안 CPU를 쓰지 않는다.
+- **서버 시작:** `server.json`의 포트로 `/health`를 확인하고, 답이 없으면 CLI의 `start`를 띄운다. 별도 Node 설치를 요구하지 않도록 VS Code 실행 파일을 `ELECTRON_RUN_AS_NODE=1`로 Node처럼 쓴다. 분리(detached) 실행이라 창을 닫아도 서버는 남는다. 다른 창과 에이전트 훅이 같은 서버를 쓰기 때문이다. 8초 안에 서버가 답하지 않으면 탭에 이유를 한국어로 보여 준다. 두 창이 동시에 시작해도 늦은 쪽은 포트가 이미 쓰여 끝나고, 확인 루프가 먼저 뜬 서버를 찾는다.
+- `extensionKind: ["ui"]`: 원격(WSL) 창에서도 확장은 Windows 쪽에서 돈다. 서버와 훅이 있는 쪽이다. 이때 작업 폴더는 원격 경로(`/home/...`)로 넘긴다.
+- vscode 모듈에 의존하지 않는 부분(`src/office.ts`)은 Node 테스트로 확인한다: HTML의 CSP와 이스케이프, 실행 중인 서버를 쓰는지, 없으면 시작하고 찾는지, 실패 메시지, 실제 CLI를 분리 실행해 `/health`가 답하는지.
+
+### 10.3 실제 확인 (2026-11-09, VS Code 1.145.2, Windows)
+
+사용자 설정을 건드리지 않도록 임시 `--user-data-dir`, `--extensions-dir`과 `--extensionDevelopmentPath`로 확장 개발 창을 띄웠다.
+
+- 서버가 이미 떠 있을 때: 창이 열리자 `Pixel Office · pixel-office` 탭이 옆에 자동으로 열렸고, 이 저장소에서 일하던 Claude 세션이 "작업 중"으로 나왔다.
+- 서버가 없을 때(서버를 끄고 `server.json`은 남긴 상태): 확장이 서버를 띄웠고(`Code.exe`가 Node로 실행), 같은 화면이 나왔다. 개발 창을 닫은 뒤에도 서버는 `/health`에 답했다.
+- 캡처: `screenshots/step7-vscode-webview.png`.
+
+### 10.4 확인하지 못한 것
+
+- 원격(WSL, SSH) 창. 경로 넘기기와 `asExternalUri`는 코드만 있다.
+- `.vsix` 패키지와 마켓플레이스 배포. 지금 확장은 저장소의 `node_modules`(워크스페이스 링크)에서 core와 cli를 찾으므로 저장소 안에서만 돈다. 패키지로 만들려면 core, ui, cli와 `ws`를 확장 폴더 안에 넣어야 한다.
+- (참고) Orca는 VS Code 확장을 싣지 않는다(1절). Orca는 8단계에서 내장 브라우저 탭으로 연다.

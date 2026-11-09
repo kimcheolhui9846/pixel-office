@@ -9,7 +9,8 @@
   "workspaces": [
     "packages/core",
     "packages/ui",
-    "packages/cli"
+    "packages/cli",
+    "packages/vscode"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
