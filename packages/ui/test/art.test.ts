@@ -4,6 +4,7 @@ import { describe, test } from "node:test";
 import { DEMO_LOOP_MS, demoScene, type Scene, type SceneMode } from "@pixel-office/core";
 
 import { art, HEIGHT, type Op, WIDTH } from "../src/art.js";
+import { ROOM_H, ROOM_W } from "../src/office.js";
 import { CHAR_H, CHAR_W, POSES, SPRITES } from "../src/sprites.js";
 
 const base = { frame: 0, reducedMotion: false, connected: true };
@@ -42,12 +43,17 @@ describe("art", () => {
   });
 
   test("during an alert the alarm and the red frame show on every frame", () => {
+    const off = art(sceneOf("IDLE"), base).find((o) => o.tag === "claude-alarm-off")!;
+    assert.ok(off.kind === "rect");
+    const reds = new Set<string>();
     for (const frame of [0, 1, 2, 3]) {
       const ops = art(sceneOf("CLAUDE_ALERT"), { ...base, frame });
       const alarm = ops.find((o) => o.tag === "claude-alarm-on")!;
-      assert.ok(alarm.kind === "rect" && alarm.color !== "#555560", `frame ${frame}`);
+      assert.ok(alarm.kind === "rect" && alarm.color !== off.color, `frame ${frame}`);
+      reds.add(alarm.color);
       assert.equal(ops.filter((o) => o.tag === "alert-glow").length, 4);
     }
+    assert.equal(reds.size, 2, "the light blinks between two reds");
   });
 
   test("a codex alert lights the codex side, not the claude alarm", () => {
@@ -59,10 +65,14 @@ describe("art", () => {
   test("animation changes frames, reduced motion does not", () => {
     const s = sceneOf("CLAUDE_RUNNING");
     assert.notDeepEqual(art(s, { ...base, frame: 1 }), art(s, { ...base, frame: 2 }));
-    assert.deepEqual(
-      art(s, { ...base, frame: 1, reducedMotion: true }),
-      art(s, { ...base, frame: 7, reducedMotion: true }),
-    );
+    for (const mode of ["IDLE", "CODEX_BUILDING", "CLAUDE_RUNNING", "CLAUDE_ALERT", "SUCCESS"] as SceneMode[]) {
+      for (const focus of ["codex", "claude"] as const) {
+        const still = art(sceneOf(mode, focus), { ...base, frame: 0, reducedMotion: true });
+        for (const frame of [1, 2, 3, 7]) {
+          assert.deepEqual(art(sceneOf(mode, focus), { ...base, frame, reducedMotion: true }), still, `${mode} ${focus}`);
+        }
+      }
+    }
   });
 
   test("the same input always draws the same picture", () => {
@@ -113,14 +123,14 @@ describe("demo", () => {
 });
 
 describe("sprites", () => {
-  test("every pose of both agents is a 12 x 22 frame with real pixels", () => {
+  test("every pose of both agents is a 20 x 32 frame with real pixels", () => {
     for (const agent of ["codex", "claude"] as const) {
       for (const pose of POSES) {
         const s = SPRITES[`${agent}/${pose}`]!;
         assert.equal(s.w, CHAR_W);
         assert.equal(s.h, CHAR_H);
         assert.equal(s.px.length, CHAR_W * CHAR_H);
-        assert.ok(s.px.filter((p) => p !== null).length > 60, `${agent}/${pose}`);
+        assert.ok(s.px.filter((p) => p !== null).length > 200, `${agent}/${pose}`);
         assert.ok(s.px.every((p) => p === null || /^#[0-9a-f]{6}$/.test(p)));
       }
     }
@@ -133,6 +143,38 @@ describe("sprites", () => {
     }
     assert.notDeepEqual(SPRITES["codex/rest"]!.px, SPRITES["claude/rest"]!.px);
     assert.notDeepEqual(SPRITES["codex/rest"]!.px, SPRITES["codex/nod"]!.px);
+  });
+
+  test("every sprite is well-formed", () => {
+    for (const [name, s] of Object.entries(SPRITES)) {
+      assert.equal(s.px.length, s.w * s.h, name);
+      assert.ok(s.px.every((p) => p === null || /^#[0-9a-f]{6}([0-9a-f]{2})?$/.test(p)), name);
+    }
+  });
+
+  test("the office background fills the room above the labels, with no holes", () => {
+    const office = SPRITES["office"]!;
+    assert.equal(office.w, WIDTH);
+    assert.equal(ROOM_W, WIDTH);
+    assert.equal(office.h, ROOM_H);
+    assert.ok(ROOM_H < HEIGHT - 10, "room for the labels");
+    assert.ok(office.px.every((p) => p !== null && p.length === 7));
+    // a real picture, not a flat fill
+    assert.ok(new Set(office.px).size > 80);
+  });
+
+  test("the background is one sprite, so a frame stays a short list", () => {
+    const modes: SceneMode[] = ["IDLE", "CODEX_BUILDING", "CLAUDE_RUNNING", "CLAUDE_ALERT", "SUCCESS"];
+    for (const mode of modes) {
+      const ops = art(sceneOf(mode), base);
+      assert.equal(ops[0]!.kind === "sprite" && ops[0]!.name, "office");
+      assert.ok(ops.length < 120, `${mode}: ${ops.length}`);
+    }
+  });
+
+  test("the idle office does not move", () => {
+    const s = sceneOf("IDLE");
+    assert.deepEqual(art(s, { ...base, frame: 0 }), art(s, { ...base, frame: 5 }));
   });
 
   test("every sprite the scenes use exists", () => {
@@ -161,5 +203,8 @@ describe("sprites", () => {
     assert.ok(t("CLAUDE_ALERT", 0, "codex").has("codex-head"));
     assert.ok(t("SUCCESS", 0).has("codex-rest") && t("SUCCESS", 3).has("codex-nod"));
     assert.ok(t("SUCCESS").has("claude-cheer"));
+    assert.ok(t("CLAUDE_ALERT").has("claude-log"));
+    assert.ok(t("SUCCESS").has("claude-ok"));
+    assert.ok(t("CLAUDE_ALERT", 0, "codex").has("codex-error"));
   });
 });

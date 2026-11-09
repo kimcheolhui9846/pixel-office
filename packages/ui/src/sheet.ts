@@ -1,7 +1,7 @@
 /**
  * Sprite sheet loader for the page (step 9), kept apart from the pixel data so another sheet
  * can replace it. Each sprite becomes a small canvas the first time it is drawn; after that a
- * frame is one `drawImage` per sprite.
+ * frame is one `drawImage` per sprite. Colours are `#rrggbb` or `#rrggbbaa`.
  */
 import type { Sprite } from "./sprites.js";
 
@@ -26,12 +26,17 @@ export function pixelSheet(sprites: Readonly<Record<string, Sprite>>): SpriteShe
     canvas.width = sprite.w;
     canvas.height = sprite.h;
     const g = canvas.getContext("2d")!;
+    // one pass over the pixels (the office background alone is 240 x 122)
+    const pixels = g.createImageData(sprite.w, sprite.h);
     sprite.px.forEach((color, i) => {
       if (color !== null) {
-        g.fillStyle = color;
-        g.fillRect(i % sprite.w, Math.floor(i / sprite.w), 1, 1);
+        pixels.data[i * 4] = parseInt(color.slice(1, 3), 16);
+        pixels.data[i * 4 + 1] = parseInt(color.slice(3, 5), 16);
+        pixels.data[i * 4 + 2] = parseInt(color.slice(5, 7), 16);
+        pixels.data[i * 4 + 3] = color.length === 9 ? parseInt(color.slice(7, 9), 16) : 255;
       }
     });
+    g.putImageData(pixels, 0, 0);
     cache.set(name, canvas);
     return canvas;
   };
