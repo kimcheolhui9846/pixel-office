@@ -298,7 +298,7 @@ function files(options: InitOptions, io: InitIo, mode: "init" | "uninit"): FileS
 const AFTER_APPLY: Record<HookAgent, string[]> = {
   claude: ["실행 중인 Claude Code 세션도 대개 바로 반영합니다. 반영되지 않으면 세션을 다시 시작하세요."],
   codex: [
-    "Codex는 새 훅을 신뢰하기 전에는 실행하지 않습니다. Codex에서 `/hooks`를 열어 Pixel Office 훅을 신뢰하세요.",
+    "Codex는 새 훅이나 바뀐 훅을 신뢰하기 전에는 실행하지 않습니다. Codex에서 `/hooks`를 열어 Pixel Office 훅을 신뢰하세요.",
     "이미 실행 중인 Codex 세션에는 다시 시작해야 반영될 수 있습니다.",
   ],
 };

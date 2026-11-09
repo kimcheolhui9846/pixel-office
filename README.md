@@ -47,7 +47,7 @@ npx pixel-office uninit           # init이 넣은 훅만 지운다
 > 고치기 전에 diff를 보여 주고, 확인을 받은 뒤, 원래 파일을 `~/.pixel-office/backups/<시각>/`(`claude-settings.json`, `codex-hooks.json`)에 백업한다. 다른 훅(Orca, skill kit 등)과 다른 설정은 그대로 둔다. 터미널이 아닌 곳에서 `--yes` 없이 실행하면 아무것도 쓰지 않고 종료 코드 64로 끝난다.
 
 - **Codex는 새 훅을 신뢰해야 실행한다.** `init` 뒤에 Codex에서 `/hooks`를 열어 Pixel Office 훅을 신뢰한다. 저장소를 옮겨 명령이 바뀌면 다시 신뢰해야 한다.
-- 훅은 서버가 꺼져 있어도 조용히 끝난다(0.5초 제한, 출력 없음). 백그라운드(`async`)로 돌아서 에이전트를 기다리게 하지 않는다.
+- 훅은 서버가 꺼져 있어도 조용히 끝난다(0.5초 제한, 출력 없음). Claude Code 훅은 백그라운드(`async`)로 돈다. Codex 훅은 async가 실행되지 않아 동기로 돌며, 이벤트마다 보통 수십 ms를 기다리게 한다.
 - 저장소를 옮기거나 node를 바꾸면 `init`을 다시 실행한다. 예전 항목이 새 항목으로 바뀐다.
 - WSL 안에서 실행하면 훅이 Windows 쪽 `.pixel-office` 폴더를 읽도록 설정한다. 자동으로 찾지 못하면 `--windows-home /mnt/c/Users/<이름>`을 준다. WSL은 mirrored networking이어야 한다.
 - 자세한 내용은 `docs/DESIGN.md` 7절(Claude Code)과 8절(Codex)에 있다.

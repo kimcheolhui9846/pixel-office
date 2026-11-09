@@ -231,7 +231,7 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 - **exec form이 없다(문서, 소스):** `command`는 문자열 하나이고 셸이 실행한다. Windows에서는 `%COMSPEC% /C "<command>"`(바깥 따옴표를 붙여 그대로 넘김), 그 밖에서는 `$SHELL -lc <command>`다(`codex-rs/hooks/src/engine/command_runner.rs`).
 - **종료 코드가 없다(소스):** 셸 도구의 `tool_name`은 `Bash`이고, `PostToolUse`의 `tool_response`는 출력 문자열뿐이다(`unified_exec_tests.rs`). `PostToolUseFailure`도 없다. 그래서 Codex는 도구 실패를 알 수 없고, "테스트 통과" 추정도 하지 않는다.
 - **stdout(문서):** `UserPromptSubmit`과 `SessionStart`의 평문 stdout은 모델 컨텍스트에 들어가고, `Stop`의 평문은 잘못된 출력이다. 종료 코드 2는 동작을 막는다. 우리 훅은 아무것도 출력하지 않고 항상 0으로 끝나므로 해당 없다.
-- **async(문서):** `"async": true`면 백그라운드에서 돈다(세션당 8개까지). 세션이 끝날 때 남은 백그라운드 훅은 취소되므로 마지막 이벤트가 빠질 수 있다.
+- **async(문서):** `"async": true`면 백그라운드에서 돈다(세션당 8개까지). 하지만 실제 세션에서는 async 핸들러가 실행되지 않아서(8.6) Codex 훅은 동기로 둔다.
 
 ### 8.2 대응표 (`packages/core/src/codex.ts`, 순수 함수 `fromCodexHook`)
 
@@ -245,7 +245,7 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 | `Stop` | stop | 없음 (마지막 메시지는 버림) |
 
 - 등록하지 않는 것: `SessionStart`(아직 일을 시작하지 않음), `SessionEnd`(항상 동기로 돌아 세션 종료를 늦춤), `Interrupt`(사용자가 멈춘 것을 "완료"로 그리면 틀리다. 30초 뒤 쉬는 중으로 돌아간다), 압축·하위 에이전트 이벤트.
-- `PostModelRequest`는 모델 요청마다 오므로 훅이 그만큼 더 실행된다. 백그라운드라 Codex를 늦추지 않는다.
+- `PostModelRequest`는 모델 요청마다 오므로 훅이 그만큼 더 실행된다. 동기 훅이라 요청마다 훅 실행 시간(보통 수십 ms, 최대 0.5초)만큼 Codex가 기다린다.
 
 ### 8.3 명령 문자열 (`packages/cli/src/settings.ts`, `codexCommand`)
 
@@ -262,7 +262,13 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 
 ### 8.5 확인하지 못한 것
 
-- 실제 Codex 세션에서 훅이 실행되는지(신뢰 절차 포함). 설치 버전의 동작이 `main` 소스와 같은지.
+- 동기로 바꾼 훅이 실제 세션에서 실행되는지(8.6 다음 확인).
 - `PermissionRequest`가 승인 창마다 오는지, 자동 승인 모드에서는 오지 않는지.
 - `PostModelRequest`의 `failed`가 재시도 중인 일시 오류에도 오는지. 그렇다면 잠깐 "문제 발생"이 보였다가 다음 이벤트로 돌아간다.
-- Orca가 띄운 Codex가 다른 `CODEX_HOME`을 쓰는지. 그렇다면 그 폴더에도 `init`이 필요하다.
+
+### 8.6 실제 세션 확인 1차 (2026-11-09, codex-cli 0.167.0, Windows, Orca 터미널)
+
+- **Orca 안의 Codex는 다른 `CODEX_HOME`을 쓴다.** `%APPDATA%\orca\codex-accounts\<id>\home`이다. Orca가 `~/.codex/hooks.json`을 이 폴더로 복사해서, `init`이 넣은 훅이 그대로 나타났다. 신뢰 기록은 그 폴더의 `config.toml`(`[hooks.state]`)에 남는다.
+- **신뢰:** Codex 시작 화면에 "Hooks need review"가 떴고, `/hooks`에서 우리 훅 6개를 신뢰했다. 화면에는 Async, 3s로 표시됐다.
+- **async 훅은 실행되지 않았다.** 작업 하나를 끝까지 돌리는 동안 서버에 Codex 이벤트가 하나도 오지 않았고, `PIXEL_OFFICE_DEBUG=1`의 로그 파일도 생기지 않았다. 같은 파일의 Orca 훅(동기)은 실행됐다(Orca가 Bash 실행과 완료를 기록). 같은 명령을 `cmd.exe /C "..."`로, 환경 변수를 거의 비운 채 직접 실행하면 서버가 받았다(204). Codex 로그에는 이벤트마다 훅 실행이 하나씩만 기록됐다.
+- **결론(추정):** 이 버전은 Windows에서 async 핸들러를 실행하지 않는다. 그래서 Codex 훅에서 `async`를 뺐다. 이전에 넣은 async 항목은 `init`을 다시 실행하면 같은 자리에서 동기 항목으로 바뀐다. 명령의 해시가 바뀌므로 `/hooks`에서 다시 신뢰해야 한다.

@@ -10,7 +10,7 @@
  */
 import { CLAUDE_HOOK_EVENTS, CODEX_HOOK_EVENTS } from "@pixel-office/core";
 
-/** Seconds. The agents do not enforce it on async hooks; it applies if async is ignored. */
+/** Seconds. Claude Code ignores it for async hooks; the Codex hook is synchronous, so it applies there. */
 export const HOOK_TIMEOUT_S = 3;
 
 export type HookAgent = "claude" | "codex";
@@ -35,7 +35,7 @@ export interface CommandHook {
   type: "command";
   command: string;
   args?: string[];
-  async: true;
+  async?: true;
   timeout: number;
 }
 
@@ -49,7 +49,10 @@ export class SettingsError extends Error {}
  */
 export function ourHook(target: HookTarget, agent: HookAgent = "claude"): CommandHook {
   if (agent === "codex") {
-    return { type: "command", command: codexCommand(target), async: true, timeout: HOOK_TIMEOUT_S };
+    // Synchronous on purpose: codex-cli 0.167.0 on Windows never ran our async handlers in a
+    // real session, while synchronous ones in the same file did (DESIGN.md 8.6). The hook
+    // itself ends within 500 ms, so Codex waits at most that long per event.
+    return { type: "command", command: codexCommand(target), timeout: HOOK_TIMEOUT_S };
   }
   const run = [target.hookPath, "claude"];
   return target.pixelOfficeHome === undefined

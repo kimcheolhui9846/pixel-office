@@ -462,12 +462,11 @@ describe("Codex hooks", () => {
   const CODEX_TEXT = JSON.stringify(CODEX_FIXTURE, null, 2) + "\n";
   const WIN = { nodePath: NODE, hookPath: "D:\\a b\\packages\\cli\\dist\\src\\hook.js", windows: true };
 
-  test("Windows command: double quotes for cmd.exe, no args field", () => {
+  test("Windows command: double quotes for cmd.exe, synchronous, no args field", () => {
     const handler = ourHook(WIN, "codex");
     assert.deepEqual(handler, {
       type: "command",
       command: '"C:\\Program Files\\nodejs\\node.exe" "D:\\a b\\packages\\cli\\dist\\src\\hook.js" codex',
-      async: true,
       timeout: 3,
     });
     assert.throws(() => codexCommand({ ...WIN, hookPath: "D:\\100%\\cli\\dist\\src\\hook.js" }), /%/);
@@ -508,6 +507,13 @@ describe("Codex hooks", () => {
     const got = JSON.parse(read(report)) as { args: string[]; home: string | null };
     assert.deepEqual(got.args, ["codex"]);
     assert.equal(got.home, windows ? (process.env.PIXEL_OFFICE_HOME ?? null) : "/tmp/po home");
+  });
+
+  test("an earlier async Codex entry is replaced by the synchronous one in place", () => {
+    const old = { ...ourHook(WIN, "codex"), async: true };
+    const text = JSON.stringify({ hooks: { Stop: [{ hooks: [old] }] } }, null, 2) + "\n";
+    const after = JSON.parse(addOurHooks(text, WIN, "codex").after) as { hooks: Record<string, unknown[]> };
+    assert.deepEqual(after.hooks.Stop, [{ hooks: [ourHook(WIN, "codex")] }]);
   });
 
   test("isOurHook tells the Codex entry from the Claude one", () => {
