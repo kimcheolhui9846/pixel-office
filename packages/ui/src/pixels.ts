@@ -20,6 +20,7 @@ const FONT: Record<string, string[]> = {
   O: ["111", "101", "101", "101", "111"],
   P: ["111", "101", "111", "100", "100"],
   S: ["111", "100", "111", "001", "111"],
+  T: ["111", "010", "010", "010", "010"],
   X: ["101", "101", "010", "101", "101"],
   " ": ["000", "000", "000", "000", "000"],
 };
@@ -114,6 +115,20 @@ export class Painter {
           }
         });
       });
+    });
+  }
+
+  /** Copies a sprite's solid pixels onto the canvas (see-through ones are mixed in). */
+  blit(sprite: Sprite, x: number, y: number): void {
+    sprite.px.forEach((c, i) => {
+      if (c === null) return;
+      const px = x + (i % sprite.w);
+      const py = y + Math.floor(i / sprite.w);
+      if (c.length === 9) {
+        this.blend(px, py, 1, 1, c.slice(0, 7), parseInt(c.slice(7, 9), 16) / 255);
+      } else {
+        this.set(px, py, c);
+      }
     });
   }
 

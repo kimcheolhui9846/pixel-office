@@ -21,7 +21,7 @@ const base = { agent: "codex", sessionId: "019a-codex-session", cwd: "D:\\work\\
 
 describe("fromCodexHook: the mapping table", () => {
   test("UserPromptSubmit -> start, without the prompt", () => {
-    assert.deepEqual(map({ hook_event_name: "UserPromptSubmit", prompt: "delete the secrets" }), { ...base, type: "start" });
+    assert.deepEqual(map({ hook_event_name: "UserPromptSubmit", prompt: "delete the secrets" }), { ...base, type: "start", zone: "plan" });
   });
 
   test("PreToolUse -> tool_start with the tool name, command not copied", () => {
@@ -31,7 +31,7 @@ describe("fromCodexHook: the mapping table", () => {
       tool_use_id: "call-1",
       tool_input: { command: "cat ~/.ssh/id_ed25519" },
     });
-    assert.deepEqual(event, { ...base, type: "tool_start", detail: "Bash" });
+    assert.deepEqual(event, { ...base, type: "tool_start", detail: "Bash", zone: "review" });
     assert.ok(!JSON.stringify(event).includes("ssh"));
   });
 
@@ -42,12 +42,12 @@ describe("fromCodexHook: the mapping table", () => {
       tool_input: { command: "npm test" },
       tool_response: "1 failing\nExit code 1",
     });
-    assert.deepEqual(event, { ...base, type: "tool_end", detail: "Bash" });
+    assert.deepEqual(event, { ...base, type: "tool_end", detail: "Bash", zone: "run" });
   });
 
   test("PermissionRequest -> waiting", () => {
     const event = map({ hook_event_name: "PermissionRequest", tool_name: "Bash", tool_input: { description: null } });
-    assert.deepEqual(event, { ...base, type: "waiting", detail: "Bash" });
+    assert.deepEqual(event, { ...base, type: "waiting", detail: "Bash", zone: "run" });
   });
 
   test("PostModelRequest: only failed -> error, error text not copied", () => {

@@ -1,29 +1,78 @@
 /**
- * The office background (step 9b): everything that never moves, painted once into one
- * sprite (`office`). The page turns it into a canvas the first time and then draws it with
- * a single `drawImage`, so the detail costs nothing per frame. Things that change with the
- * scene (screens, the desk lamp, the warning light) are drawn over it by `art.ts` at the
- * places exported here.
+ * The office background (steps 9b and 9c): everything that never moves, painted once into
+ * one sprite (`office`). The page turns it into a canvas the first time and then draws it
+ * with a single `drawImage`, so the detail costs nothing per frame. Things that change with
+ * the scene (screens, the desk lamp, the warning light, the door, the rack lights) are drawn
+ * over it by `art.ts` at the places exported here.
+ *
+ * Step 9c divides the floor into five work zones (see `floor.ts`), each with its own
+ * furniture and a sign: 기획 a meeting table under a whiteboard, 설계 drafting boards under a
+ * wall display, 검토 a reading desk with review screens by the window and a bookshelf,
+ * 구현 a bench of dev desks with two monitors each, 작업 terminals, a test bench and a
+ * server rack. Every seat has an empty chair, so a free seat reads as free.
  */
+import type { Zone } from "@pixel-office/core";
+
+import { emptyChair } from "./figure.js";
+import { type Point, ROOM_H, ROOM_W, SEATS, ZONE_AREAS } from "./floor.js";
 import { mix, Painter, rng, type Sprite, textWidth } from "./pixels.js";
 
-/** The room above the label bar. */
-export const ROOM_W = 240;
-export const ROOM_H = 122;
+export { ROOM_H, ROOM_W } from "./floor.js";
 
-/** Codex desk: three monitors on an arm. Screen rectangles are inside each bezel. */
-export const CODEX_DESK = { x: 30, w: 99 } as const;
-export const CODEX_MONITORS = [38, 64, 90] as const;
-export const MONITOR = { y: 57, w: 24, h: 17 } as const;
-export const SCREEN = { dx: 1, dy: 1, w: 22, h: 13 } as const;
-export const LAMP_HEAD = { x: 116, y: 61, w: 7, h: 3 } as const;
+export interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
-/** Claude desk: one wide terminal and the warning light. */
-export const CLAUDE_DESK = { x: 144, w: 69 } as const;
-export const TERMINAL = { x: 163, y: 56, w: 28, h: 15 } as const;
-export const BEACON = { x: 149, y: 70, w: 5, h: 5 } as const;
+/** Where the wall meets the floor. */
+const FLOOR_Y = 47;
+const BACK_TOP = 66;
+const FRONT_TOP = 124;
 
-const DESK_TOP = 76;
+export const LAMP_HEAD: Box = { x: 143, y: 108, w: 7, h: 3 };
+export const BEACON: Box = { x: 116, y: 13, w: 5, h: 5 };
+/** The door leaf, drawn dark (open) while someone walks through. */
+export const DOOR_LEAF: Box = { x: 5, y: 18, w: 15, h: 29 };
+const RACK = { x: 174, y: 98, w: 20, h: 54 } as const;
+/** The status lights on the server rack, one per server unit. */
+export const RACK_LEDS: readonly Point[] = Array.from({ length: 7 }, (_, i) => ({ x: RACK.x + 14, y: RACK.y + 5 + i * 7 }));
+
+/** Zone signs: a plate in the background, the Korean name drawn on it by `art.ts`. */
+export interface Sign {
+  zone: Zone;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+const SIGN_W = 25;
+export const SIGNS: readonly Sign[] = Object.values(ZONE_AREAS).map((a) =>
+  a.row === "back"
+    ? { zone: a.zone, x: a.x + 3, y: 6, w: SIGN_W, h: 10 }
+    : { zone: a.zone, x: a.x + a.w - SIGN_W - 3, y: 154, w: SIGN_W, h: 10 },
+);
+
+/** The screens at a seat (inside the bezels), lit by `art.ts` while someone works there. */
+export function seatScreens(zone: Zone, seat: Point): Box[] {
+  const c = seat.x + 10;
+  switch (zone) {
+    case "plan":
+      return [{ x: seat.x + 5, y: 58, w: 10, h: 5 }];
+    case "design":
+      return [{ x: seat.x, y: 48, w: 20, h: 11 }];
+    case "review":
+      return [{ x: seat.x + 1, y: 48, w: 18, h: 10 }];
+    case "build":
+      return [
+        { x: c - 16, y: 107, w: 14, h: 9 },
+        { x: c + 2, y: 107, w: 14, h: 9 },
+      ];
+    case "run":
+      return [{ x: c - 13, y: 106, w: 26, h: 12 }];
+  }
+}
 
 const P = {
   ceiling: "#232838",
@@ -61,141 +110,82 @@ const P = {
 export const SCREEN_OFF = P.screenOff;
 export const LAMP_OFF = "#4a4f5c";
 export const BEACON_OFF = "#6b707d";
+/** The drafting boards' paper when nobody draws on them. */
+export const BOARD_OFF = "#24507f";
 
 export function officeBackground(): Sprite {
   const p = new Painter(ROOM_W, ROOM_H, P.wall);
   ceiling(p);
   wall(p);
-  windowView(p);
   floor(p);
-  bookshelf(p);
-  clock(p);
-  cooler(p);
+  zoneFloors(p);
+  door(p);
   sign(p);
-  whiteboard(p);
-  counter(p);
-  meetingRoom(p);
-  bin(p, 20, 98);
-  codexDesk(p);
-  claudeDesk(p);
-  snakePlant(p, 3, 86);
-  bushPlant(p, 216, 88);
+  beaconMount(p);
+  // 기획: whiteboard, clock, meeting table with laptops
+  whiteboard(p, 34, 18, 62, 18);
+  clock(p, 101, 20);
+  meetingTable(p);
+  // 설계: wall display with a diagram, drafting boards
+  wallDisplay(p);
+  draftingBoards(p);
+  // 검토: window, bookshelf, reading desk with review screens
+  windowView(p, 252, 18, 32, 18);
+  bookshelf(p, 289, 9);
+  readingDesk(p);
+  bushPlant(p, -2, 58);
+  chairs(p, ["plan", "design", "review"]);
+  // front row: 구현 dev desks, 작업 terminals and the server rack
+  devDesks(p);
+  serverRack(p);
+  terminalDesks(p);
+  chairs(p, ["build", "run"]);
+  signs(p);
   return p.sprite();
 }
 
 function ceiling(p: Painter) {
   p.rect(0, 0, ROOM_W, 4, P.ceiling);
   p.rect(0, 4, ROOM_W, 1, P.ceilingEdge);
-  for (const x of [14, 74, 134, 194]) {
-    p.rect(x, 1, 32, 2, P.panel);
+  for (const x of [20, 100, 180, 260]) {
+    p.rect(x, 1, 40, 2, P.panel);
     p.set(x - 1, 1, P.panelEdge);
     p.set(x - 1, 2, P.panelEdge);
-    p.set(x + 32, 1, P.panelEdge);
-    p.set(x + 32, 2, P.panelEdge);
+    p.set(x + 40, 1, P.panelEdge);
+    p.set(x + 40, 2, P.panelEdge);
   }
 }
 
 function wall(p: Painter) {
-  p.rect(0, 5, ROOM_W, 43, P.wall);
+  p.rect(0, 5, ROOM_W, FLOOR_Y - 5, P.wall);
   // soft light from the ceiling panels, fading down the wall
-  for (const x of [14, 74, 134, 194]) {
+  for (const x of [20, 100, 180, 260]) {
     for (let i = 0; i < 8; i += 1) {
-      p.blend(x - 4 + i, 5 + i, 40 - i * 2, 1, "#ffffff", 0.07 - i * 0.008);
+      p.blend(x - 4 + i, 5 + i, 48 - i * 2, 1, "#ffffff", 0.07 - i * 0.008);
     }
   }
   p.blend(0, 5, ROOM_W, 1, P.black, 0.25);
-  p.rect(0, 38, ROOM_W, 10, P.wainscot);
-  p.rect(0, 38, ROOM_W, 1, P.rail);
-  p.rect(0, 39, ROOM_W, 1, P.railShade);
+  p.rect(0, 37, ROOM_W, 8, P.wainscot);
+  p.rect(0, 37, ROOM_W, 1, P.rail);
+  p.rect(0, 38, ROOM_W, 1, P.railShade);
   for (let x = 10; x < ROOM_W; x += 20) {
-    p.rect(x, 41, 1, 6, P.railShade);
+    p.rect(x, 40, 1, 4, P.railShade);
   }
-  p.rect(0, 48, ROOM_W, 2, P.skirting);
+  p.rect(0, 45, ROOM_W, 2, P.skirting);
 }
-
-function windowView(p: Painter) {
-  const x0 = 46;
-  const y0 = 9;
-  const w = 85;
-  const h = 27;
-  // sky
-  for (let y = 0; y < h; y += 1) {
-    const t = y / (h - 1);
-    const c = t < 0.5 ? mix("#6d8ec0", "#9bb8db", t * 2) : mix("#9bb8db", "#c9d9ec", (t - 0.5) * 2);
-    p.rect(x0, y0 + y, w, 1, c);
-  }
-  // clouds
-  for (const [cx, cy, cw] of [
-    [52, 15, 9],
-    [86, 13, 12],
-    [112, 17, 8],
-  ] as const) {
-    p.rect(cx, cy, cw, 2, "#e1e9f4");
-    p.rect(cx + 2, cy - 1, cw - 5, 1, "#e1e9f4");
-    p.rect(cx + 1, cy + 2, cw - 2, 1, "#c9d8ea");
-  }
-  const r = rng(7);
-  // far towers, hazy
-  for (let x = x0; x < x0 + w; ) {
-    const bw = 5 + Math.floor(r() * 6);
-    const bh = 9 + Math.floor(r() * 12);
-    p.rect(x, y0 + h - bh, bw, bh, "#8ea7c6");
-    p.rect(x, y0 + h - bh, 1, bh, "#9cb3cf");
-    x += bw + Math.floor(r() * 3);
-  }
-  // near towers with window grids
-  const tones = ["#4f6a8c", "#5a7596", "#46607f", "#536d8f"];
-  for (let x = x0 - 2; x < x0 + w; ) {
-    const bw = 7 + Math.floor(r() * 7);
-    const bh = 6 + Math.floor(r() * 12);
-    const top = y0 + h - bh;
-    const tone = tones[Math.floor(r() * tones.length)]!;
-    p.rect(x, top, bw, bh, tone);
-    p.rect(x, top, bw, 1, mix(tone, "#ffffff", 0.25));
-    p.rect(x + bw - 1, top + 1, 1, bh - 1, mix(tone, "#000000", 0.2));
-    for (let wy = top + 2; wy < y0 + h - 1; wy += 3) {
-      for (let wx = x + 1; wx < x + bw - 2; wx += 2) {
-        p.set(wx, wy, r() < 0.12 ? "#f2d48a" : mix(tone, "#c9d9ec", 0.35));
-      }
-    }
-    x += bw + Math.floor(r() * 2);
-  }
-  // keep the towers inside the glass
-  p.rect(x0 - 2, y0, 2, h, P.frame);
-  // glare
-  for (let i = 0; i < 10; i += 1) {
-    p.blend(x0 + 8 + i, y0 + 16 - i, 2, 1, "#ffffff", 0.18);
-    p.blend(x0 + 60 + i, y0 + 20 - i, 1, 1, "#ffffff", 0.15);
-  }
-  // roller blinds pulled up
-  p.rect(x0, y0, w, 3, "#dfe3ea");
-  p.rect(x0, y0 + 1, w, 1, "#c4cad5");
-  p.rect(x0, y0 + 3, w, 1, "#aab2c0");
-  // frame and mullions
-  p.rect(x0 - 2, y0 - 2, w + 4, 2, P.frame);
-  p.rect(x0 - 2, y0, 2, h, P.frame);
-  p.rect(x0 + w, y0, 2, h, P.frameShade);
-  for (const mx of [x0 + 27, x0 + 56]) {
-    p.rect(mx, y0, 2, h, P.frame);
-    p.rect(mx + 1, y0, 1, h, P.frameShade);
-  }
-  p.rect(x0 - 4, y0 + h, w + 8, 2, P.sill);
-  p.rect(x0 - 4, y0 + h + 2, w + 8, 1, P.sillShade);
-}
-
 
 function floor(p: Painter) {
   // carpet tiles, 12 x 12, the pile turned a quarter on every other tile
-  for (let y = 50; y < ROOM_H; y += 1) {
+  for (let y = FLOOR_Y; y < ROOM_H; y += 1) {
     for (let x = 0; x < ROOM_W; x += 1) {
       const tx = Math.floor(x / 12);
-      const ty = Math.floor((y - 50) / 12);
+      const ty = Math.floor((y - FLOOR_Y) / 12);
       const odd = (tx + ty) % 2 === 1;
       let c = odd ? "#474e61" : "#4a5165";
-      if ((odd ? x % 3 : (y - 50) % 3) === 0) {
+      if ((odd ? x % 3 : (y - FLOOR_Y) % 3) === 0) {
         c = odd ? "#454c5e" : "#484f62";
       }
-      if (x % 12 === 0 || (y - 50) % 12 === 0) {
+      if (x % 12 === 0 || (y - FLOOR_Y) % 12 === 0) {
         c = "#40465a";
       }
       const n = (x * 73 + y * 151 + ((x * y) % 17)) % 41;
@@ -206,15 +196,288 @@ function floor(p: Painter) {
   }
   // shade where the floor meets the wall
   for (let i = 0; i < 4; i += 1) {
-    p.blend(0, 50 + i, ROOM_W, 1, P.black, 0.3 - i * 0.07);
+    p.blend(0, FLOOR_Y + i, ROOM_W, 1, P.black, 0.3 - i * 0.07);
   }
 }
 
-function bookshelf(p: Painter) {
-  const x = 2;
-  const y = 12;
-  const w = 30;
-  const h = 48;
+/** Each zone gets a faint tint of its colour and a line of floor tape around it. */
+function zoneFloors(p: Painter) {
+  for (const area of Object.values(ZONE_AREAS)) {
+    const y = area.row === "back" ? FLOOR_Y + 2 : 100;
+    const h = area.row === "back" ? 43 : 55;
+    const x = area.x + 1;
+    const w = area.w - 2;
+    p.blend(x, y, w, h, area.color, 0.06);
+    const tape = (tx: number, ty: number, tw: number, th: number) => p.blend(tx, ty, tw, th, area.color, 0.35);
+    tape(x, y + h - 1, w, 1);
+    tape(x, y, 1, h - 1);
+    tape(x + w - 1, y, 1, h - 1);
+    if (area.row === "front") tape(x, y, w, 1);
+  }
+}
+
+function door(p: Painter) {
+  // frame, leaf with a small window, handle, mat
+  p.blend(3, 16, 20, 31, P.black, 0.2);
+  p.rect(3, 15, 19, 32, "#8d95a6");
+  p.rect(4, 16, 17, 31, "#6f788c");
+  p.rect(DOOR_LEAF.x, DOOR_LEAF.y, DOOR_LEAF.w, DOOR_LEAF.h, "#8c6a4a");
+  p.rect(DOOR_LEAF.x, DOOR_LEAF.y, DOOR_LEAF.w, 1, "#a37d58");
+  p.rect(DOOR_LEAF.x + DOOR_LEAF.w - 1, DOOR_LEAF.y, 1, DOOR_LEAF.h, "#6e5139");
+  p.rect(8, 21, 9, 8, "#2a2f3c");
+  p.rect(9, 22, 7, 6, "#9bb8db");
+  p.blend(9, 22, 3, 6, "#ffffff", 0.25);
+  p.rect(DOOR_LEAF.x + DOOR_LEAF.w - 4, 33, 2, 1, P.handle);
+  p.rect(DOOR_LEAF.x + DOOR_LEAF.w - 4, 34, 1, 1, P.handle);
+  p.rect(DOOR_LEAF.x + 2, 38, DOOR_LEAF.w - 5, 6, "#7d5d40");
+  // exit sign
+  p.rect(4, 8, 17, 7, "#1f6b3a");
+  p.rect(4, 8, 17, 1, "#2f8a4f");
+  p.text(5, 9, "EXIT", "#eafbea");
+  // mat
+  p.rect(3, FLOOR_Y + 1, 19, 3, "#3b3229");
+  p.rect(4, FLOOR_Y + 2, 17, 1, "#4a3f33");
+}
+
+function sign(p: Painter) {
+  const text = "PIXEL OFFICE";
+  const w = textWidth(text) + 6;
+  const x = 172 - Math.floor(w / 2);
+  p.blend(x + 1, 15, w, 1, P.black, 0.3);
+  p.rect(x, 6, w, 9, "#262b3c");
+  p.rect(x, 6, w, 1, "#3a4158");
+  p.text(x + 3, 8, text, "#e2b964");
+  // a small mark: two squares, one per agent colour
+  p.rect(x - 7, 7, 3, 3, "#3d6fd6");
+  p.rect(x - 5, 10, 3, 3, "#e2795a");
+}
+
+function beaconMount(p: Painter) {
+  const { x, y, w, h } = BEACON;
+  p.rect(x - 1, y + h, w + 2, 2, "#8a909e");
+  p.rect(x - 2, y + h + 2, w + 4, 1, P.dark);
+  p.rect(x, y, w, h, BEACON_OFF);
+  p.rect(x + 1, y - 1, w - 2, 1, BEACON_OFF);
+  p.set(x + 1, y + 1, "#9a9fab");
+}
+
+function signs(p: Painter) {
+  for (const s of SIGNS) {
+    const color = ZONE_AREAS[s.zone].color;
+    p.blend(s.x + 1, s.y + s.h, s.w, 1, P.black, 0.35);
+    p.rect(s.x, s.y, s.w, s.h, "#262b3c");
+    p.rect(s.x, s.y, s.w, 1, "#3a4158");
+    p.rect(s.x + 2, s.y + 3, 4, 4, color);
+    p.rect(s.x + 2, s.y + 3, 4, 1, mix(color, "#ffffff", 0.35));
+  }
+}
+
+function whiteboard(p: Painter, x: number, y: number, w: number, h: number) {
+  p.blend(x + 1, y + 1, w + 1, h + 1, P.black, 0.3);
+  p.rect(x, y, w, h, "#aeb5c3");
+  p.rect(x + 1, y + 1, w - 2, h - 2, "#eef1f6");
+  const blue = "#3c6db5";
+  const red = "#c84a4a";
+  // a little flow chart
+  outline(p, x + 3, y + 2, 8, 4, blue);
+  p.rect(x + 11, y + 4, 4, 1, blue);
+  p.set(x + 14, y + 3, blue);
+  p.set(x + 14, y + 5, blue);
+  outline(p, x + 15, y + 2, 8, 4, blue);
+  p.rect(x + 19, y + 6, 1, 3, blue);
+  outline(p, x + 15, y + 9, 8, 4, red);
+  p.rect(x + 3, y + 8, 7, 1, "#5c6478");
+  p.rect(x + 3, y + 10, 9, 1, "#5c6478");
+  p.rect(x + 3, y + 12, 6, 1, "#5c6478");
+  // a timeline
+  p.rect(x + 27, y + 4, 18, 1, "#5c6478");
+  for (const [tx, c] of [
+    [27, blue],
+    [33, blue],
+    [39, red],
+    [44, "#2f9e55"],
+  ] as const) {
+    p.rect(x + tx, y + 3, 2, 3, c);
+  }
+  // sticky notes
+  for (const [nx, ny, c] of [
+    [x + 27, y + 8, "#f3d55b"],
+    [x + 33, y + 9, "#f39bb0"],
+    [x + 39, y + 8, "#9fd89a"],
+    [x + 48, y + 3, "#f3d55b"],
+    [x + 54, y + 6, "#9fd89a"],
+    [x + 49, y + 10, "#f39bb0"],
+  ] as const) {
+    p.rect(nx, ny, 5, 4, c);
+    p.rect(nx + 1, ny + 1, 3, 1, mix(c, "#000000", 0.35));
+    p.rect(nx + 4, ny + 1, 1, 3, mix(c, "#000000", 0.15));
+  }
+  // marker tray
+  p.rect(x + 4, y + h, w - 8, 1, "#8a92a3");
+  p.rect(x + 8, y + h - 1, 3, 1, red);
+  p.rect(x + 12, y + h - 1, 3, 1, blue);
+  p.rect(x + 16, y + h - 1, 3, 1, "#2a2d36");
+}
+
+function outline(p: Painter, x: number, y: number, w: number, h: number, c: string) {
+  p.rect(x, y, w, 1, c);
+  p.rect(x, y + h - 1, w, 1, c);
+  p.rect(x, y, 1, h, c);
+  p.rect(x + w - 1, y, 1, h, c);
+}
+
+function clock(p: Painter, x: number, y: number) {
+  p.grid(x, y, [
+    "..kkkkk..",
+    ".kwwwwwk.",
+    "kwwwkwwwk",
+    "kwwwkwwwk",
+    "kwwwkkkwk",
+    "kwwwwwwwk",
+    "kwwwwwwwk",
+    ".kwwwwwk.",
+    "..kkkkk..",
+  ], { k: "#2a2f40", w: "#eef1f6" });
+}
+
+function meetingTable(p: Painter) {
+  const x = 29;
+  const w = 86;
+  p.blend(x + 2, 90, w - 2, 3, P.black, 0.28);
+  // legs, then the top
+  for (const lx of [x + 3, x + w - 6]) {
+    p.rect(lx, BACK_TOP + 9, 3, 15, "#3a3f4c");
+    p.rect(lx, BACK_TOP + 9, 1, 15, "#4b5160");
+  }
+  p.rect(x + 8, BACK_TOP + 9, w - 16, 2, "#3a3f4c");
+  p.rect(x, BACK_TOP, w, 7, "#8d6748");
+  p.rect(x, BACK_TOP, w, 1, "#a37a57");
+  const r = rng(x);
+  for (let i = 0; i < 8; i += 1) {
+    p.rect(x + 2 + Math.floor(r() * (w - 14)), BACK_TOP + 2 + Math.floor(r() * 4), 5 + Math.floor(r() * 7), 1, "#7d5a3e");
+  }
+  p.rect(x, BACK_TOP + 7, w, 2, "#6b4c35");
+  // a laptop at every seat
+  for (const seat of SEATS.plan) {
+    const lx = seat.x + 4;
+    p.rect(lx, 57, 12, 7, "#c4c8d0");
+    p.rect(lx, 57, 12, 1, "#d6d9df");
+    p.rect(lx + 1, 58, 10, 5, P.screenOff);
+    p.rect(lx - 1, 64, 14, 2, "#a9aeb8");
+  }
+  // papers, a jug and cups between the seats
+  p.rect(56, 63, 4, 3, "#f2f3f6");
+  p.rect(57, 64, 2, 1, "#a9afbb");
+  p.rect(84, 61, 3, 5, "#cfe7f7");
+  p.rect(84, 61, 3, 1, "#8fc1e3");
+  p.rect(110, 63, 3, 3, "#3d6fd6");
+  p.rect(30, 63, 3, 3, "#e2795a");
+}
+
+function wallDisplay(p: Painter) {
+  const x = 138;
+  const y = 18;
+  const w = 68;
+  const h = 18;
+  p.blend(x + 1, y + h, w, 1, P.black, 0.3);
+  p.rect(x, y, w, h, P.bezel);
+  p.rect(x, y, w, 1, P.bezelLight);
+  p.rect(x + 1, y + 1, w - 2, h - 3, "#16263d");
+  // an architecture diagram: boxes and the lines between them
+  const boxes: [number, number, number, string][] = [
+    [4, 3, 10, "#6fa8dc"],
+    [4, 9, 10, "#6fa8dc"],
+    [26, 6, 14, "#93c47d"],
+    [52, 3, 11, "#f6b26b"],
+    [52, 9, 11, "#c792ea"],
+  ];
+  for (const [bx, by, bw, c] of boxes) {
+    outline(p, x + bx, y + by, bw, 4, c);
+    p.rect(x + bx + 2, y + by + 2, bw - 5, 1, mix(c, "#16263d", 0.4));
+  }
+  const line = "#9fb6d4";
+  p.rect(x + 14, y + 5, 6, 1, line);
+  p.rect(x + 14, y + 11, 6, 1, line);
+  p.rect(x + 20, y + 5, 1, 7, line);
+  p.rect(x + 20, y + 8, 6, 1, line);
+  p.rect(x + 40, y + 8, 6, 1, line);
+  p.rect(x + 46, y + 5, 1, 7, line);
+  p.rect(x + 46, y + 5, 6, 1, line);
+  p.rect(x + 46, y + 11, 6, 1, line);
+  p.set(x + w - 3, y + h - 2, "#3fbf6f");
+}
+
+function draftingBoards(p: Painter) {
+  for (const seat of SEATS.design) {
+    const x = seat.x;
+    // stand: two legs and a foot bar behind the chair
+    p.rect(x + 1, 61, 2, 29, "#3a3f4c");
+    p.rect(x + 17, 61, 2, 29, "#3a3f4c");
+    p.rect(x + 1, 82, 18, 1, "#3a3f4c");
+    // the tilted board: wooden frame, blueprint paper, a grid
+    p.blend(x - 1, 61, 24, 2, P.black, 0.25);
+    p.rect(x - 2, 46, 24, 15, "#c79a6c");
+    p.rect(x - 2, 46, 24, 1, "#d8b083");
+    p.rect(x - 2, 60, 24, 1, "#8c6240");
+    p.rect(x, 48, 20, 11, BOARD_OFF);
+    for (let gx = x + 3; gx < x + 20; gx += 4) p.rect(gx, 48, 1, 11, "#2c5c8f");
+    for (let gy = 50; gy < 59; gy += 3) p.rect(x, gy, 20, 1, "#2c5c8f");
+    // a pencil tray
+    p.rect(x - 1, 61, 22, 1, "#8c6240");
+    p.rect(x + 3, 60, 4, 1, "#f0c75e");
+  }
+}
+
+function windowView(p: Painter, x0: number, y0: number, w: number, h: number) {
+  // sky
+  for (let y = 0; y < h; y += 1) {
+    const t = y / (h - 1);
+    const c = t < 0.5 ? mix("#6d8ec0", "#9bb8db", t * 2) : mix("#9bb8db", "#c9d9ec", (t - 0.5) * 2);
+    p.rect(x0, y0 + y, w, 1, c);
+  }
+  p.rect(x0 + 4, y0 + 6, 8, 2, "#e1e9f4");
+  p.rect(x0 + 6, y0 + 5, 4, 1, "#e1e9f4");
+  const r = rng(7);
+  for (let x = x0; x < x0 + w; ) {
+    const bw = 4 + Math.floor(r() * 5);
+    const bh = 6 + Math.floor(r() * 8);
+    p.rect(x, y0 + h - bh, Math.min(bw, x0 + w - x), bh, "#8ea7c6");
+    x += bw + Math.floor(r() * 3);
+  }
+  const tones = ["#4f6a8c", "#5a7596", "#46607f", "#536d8f"];
+  for (let x = x0; x < x0 + w; ) {
+    const bw = Math.min(6 + Math.floor(r() * 6), x0 + w - x);
+    const bh = 4 + Math.floor(r() * 9);
+    const top = y0 + h - bh;
+    const tone = tones[Math.floor(r() * tones.length)]!;
+    p.rect(x, top, bw, bh, tone);
+    p.rect(x, top, bw, 1, mix(tone, "#ffffff", 0.25));
+    for (let wy = top + 2; wy < y0 + h - 1; wy += 3) {
+      for (let wx = x + 1; wx < x + bw - 1; wx += 2) {
+        p.set(wx, wy, r() < 0.12 ? "#f2d48a" : mix(tone, "#c9d9ec", 0.35));
+      }
+    }
+    x += bw + Math.floor(r() * 2);
+  }
+  for (let i = 0; i < 8; i += 1) {
+    p.blend(x0 + 6 + i, y0 + 14 - i, 2, 1, "#ffffff", 0.18);
+  }
+  // blinds pulled up, frame, a mullion and the sill
+  p.rect(x0, y0, w, 3, "#dfe3ea");
+  p.rect(x0, y0 + 1, w, 1, "#c4cad5");
+  p.rect(x0, y0 + 3, w, 1, "#aab2c0");
+  p.rect(x0 - 2, y0 - 2, w + 4, 2, P.frame);
+  p.rect(x0 - 2, y0, 2, h, P.frame);
+  p.rect(x0 + w, y0, 2, h, P.frameShade);
+  p.rect(x0 + Math.floor(w / 2) - 1, y0, 2, h, P.frame);
+  p.rect(x0 + Math.floor(w / 2), y0, 1, h, P.frameShade);
+  p.rect(x0 - 4, y0 + h, w + 8, 2, P.sill);
+  p.rect(x0 - 4, y0 + h + 2, w + 8, 1, P.sillShade);
+}
+
+function bookshelf(p: Painter, x: number, y: number) {
+  const w = 29;
+  const h = 40;
   p.rect(x, y, w, h, "#5b3f2c");
   p.rect(x, y, w, 1, "#7f5a3f");
   p.rect(x + w - 1, y, 1, h, "#4a3324");
@@ -238,237 +501,17 @@ function bookshelf(p: Painter) {
       if (bw === 3) p.set(bx + 1, top + 3, "#e8e2cf");
       bx += bw;
     }
-    // shelf board
     p.rect(x + 1, sy + 8, w - 2, 2, "#6e4c35");
     p.rect(x + 1, sy + 9, w - 2, 1, "#4a3324");
   }
-  // binders on the bottom open shelf
-  p.rect(x + 2, y + 32, w - 4, 2, "#2b211b");
-  // closed cabinet
-  const cy = y + 34;
-  p.rect(x + 1, cy, w - 2, 13, "#6a4a34");
+  // closed cabinet at the bottom
+  const cy = y + 32;
+  p.rect(x + 1, cy, w - 2, h - 33, "#6a4a34");
   p.rect(x + 1, cy, w - 2, 1, "#7f5a3f");
-  p.rect(x + 15, cy, 1, 13, "#4a3324");
-  p.rect(x + 12, cy + 5, 1, 3, "#c9b48a");
-  p.rect(x + 18, cy + 5, 1, 3, "#c9b48a");
+  p.rect(x + 14, cy, 1, h - 33, "#4a3324");
+  p.rect(x + 12, cy + 3, 1, 2, "#c9b48a");
+  p.rect(x + 16, cy + 3, 1, 2, "#c9b48a");
   p.rect(x, y + h - 1, w, 1, "#2a1d15");
-  // a small plant on top
-  p.rect(x + 20, y - 4, 6, 4, "#d6d2c9");
-  p.rect(x + 20, y - 1, 6, 1, "#a9a49a");
-  for (const [lx, ly] of [
-    [21, -8],
-    [23, -10],
-    [25, -7],
-    [19, -6],
-    [27, -5],
-  ] as const) {
-    p.rect(x + lx, y + ly, 2, 4, "#3f8a57");
-    p.set(x + lx, y + ly, "#5aab6c");
-  }
-}
-
-function clock(p: Painter) {
-  p.grid(34, 9, [
-    "..kkkkk..",
-    ".kwwwwwk.",
-    "kwwwkwwwk",
-    "kwwwkwwwk",
-    "kwwwkkkwk",
-    "kwwwwwwwk",
-    "kwwwwwwwk",
-    ".kwwwwwk.",
-    "..kkkkk..",
-  ], { k: "#2a2f40", w: "#eef1f6" });
-}
-
-function cooler(p: Painter) {
-  const x = 34;
-  p.grid(x, 21, [
-    "...ccc...",
-    "..bbbbb..",
-    ".bBbbbbb.",
-    ".bBbbbbd.",
-    ".bBbbbbd.",
-    ".bbbbbbd.",
-    ".bbbbbbd.",
-    "..bbbbb..",
-    "...nnn...",
-  ], { c: "#2f5f99", b: "#8fc1e3", B: "#cfe7f7", d: "#6fa6cf", n: "#6fa6cf" });
-  p.rect(x, 30, 9, 30, "#dde2ea");
-  p.rect(x, 30, 9, 1, "#c6ccd6");
-  p.rect(x, 31, 1, 29, "#eef1f6");
-  p.rect(x + 8, 31, 1, 29, "#b5bcc8");
-  p.rect(x + 1, 35, 7, 7, "#9ba3b2");
-  p.rect(x + 2, 36, 2, 2, "#d9534f");
-  p.rect(x + 5, 36, 2, 2, "#4a8fd6");
-  p.rect(x + 1, 41, 7, 1, "#7d8595");
-  p.rect(x + 1, 46, 7, 1, "#b5bcc8");
-  p.rect(x, 58, 9, 2, "#8d95a5");
-}
-
-function sign(p: Painter) {
-  const text = "PIXEL OFFICE";
-  const w = textWidth(text) + 6;
-  const x = 163 - Math.floor(w / 2);
-  p.blend(x + 1, 15, w, 1, P.black, 0.3);
-  p.rect(x, 6, w, 9, "#262b3c");
-  p.rect(x, 6, w, 1, "#3a4158");
-  p.text(x + 3, 8, text, "#e2b964");
-  // a small mark: two squares, one per agent colour
-  p.rect(x - 7, 7, 3, 3, "#3d6fd6");
-  p.rect(x - 5, 10, 3, 3, "#e2795a");
-}
-
-function whiteboard(p: Painter) {
-  const x = 142;
-  const y = 17;
-  p.blend(x + 1, y + 1, 43, 15, P.black, 0.3);
-  p.rect(x, y, 43, 14, "#aeb5c3");
-  p.rect(x + 1, y + 1, 41, 12, "#eef1f6");
-  const blue = "#3c6db5";
-  const red = "#c84a4a";
-  // a little flow chart
-  outline(p, x + 3, y + 2, 8, 4, blue);
-  p.rect(x + 11, y + 4, 4, 1, blue);
-  p.set(x + 14, y + 3, blue);
-  p.set(x + 14, y + 5, blue);
-  outline(p, x + 15, y + 2, 8, 4, blue);
-  p.rect(x + 19, y + 6, 1, 2, blue);
-  outline(p, x + 15, y + 8, 8, 4, red);
-  p.rect(x + 3, y + 8, 7, 1, "#5c6478");
-  p.rect(x + 3, y + 10, 9, 1, "#5c6478");
-  // sticky notes
-  for (const [nx, ny, c] of [
-    [x + 26, y + 2, "#f3d55b"],
-    [x + 32, y + 3, "#f39bb0"],
-    [x + 27, y + 7, "#9fd89a"],
-    [x + 34, y + 8, "#f3d55b"],
-  ] as const) {
-    p.rect(nx, ny, 5, 4, c);
-    p.rect(nx + 1, ny + 1, 3, 1, mix(c, "#000000", 0.35));
-    p.rect(nx + 4, ny + 1, 1, 3, mix(c, "#000000", 0.15));
-  }
-  // marker tray
-  p.rect(x + 4, y + 14, 35, 1, "#8a92a3");
-  p.rect(x + 8, y + 13, 3, 1, red);
-  p.rect(x + 12, y + 13, 3, 1, blue);
-  p.rect(x + 16, y + 13, 3, 1, "#2a2d36");
-}
-
-function outline(p: Painter, x: number, y: number, w: number, h: number, c: string) {
-  p.rect(x, y, w, 1, c);
-  p.rect(x, y + h - 1, w, 1, c);
-  p.rect(x, y, 1, h, c);
-  p.rect(x + w - 1, y, 1, h, c);
-}
-
-function counter(p: Painter) {
-  const x = 138;
-  const w = 50;
-  // coffee machine
-  p.rect(x + 4, 33, 11, 9, "#2b2e37");
-  p.rect(x + 4, 33, 11, 1, "#3d414d");
-  p.rect(x + 6, 35, 7, 3, "#9aa1ae");
-  p.set(x + 13, 34, "#e25555");
-  p.rect(x + 8, 38, 2, 1, "#9aa1ae");
-  p.rect(x + 7, 39, 4, 3, P.white);
-  p.rect(x + 7, 39, 4, 1, "#6b4a35");
-  // mugs
-  p.rect(x + 18, 39, 3, 3, "#3d6fd6");
-  p.rect(x + 22, 39, 3, 3, "#e2795a");
-  // printer
-  p.rect(x + 26, 35, 21, 7, "#d4d7dd");
-  p.rect(x + 26, 35, 21, 1, "#e6e8ec");
-  p.rect(x + 26, 41, 21, 1, "#a9aeb8");
-  p.rect(x + 29, 37, 13, 2, "#5e6472");
-  p.rect(x + 30, 36, 11, 1, "#fbfbfd");
-  p.rect(x + 43, 36, 3, 2, "#3a3f4c");
-  p.set(x + 44, 36, "#5ad17a");
-  // counter
-  p.rect(x, 42, w, 2, "#cfd3da");
-  p.rect(x, 44, w, 1, "#9da4b1");
-  p.rect(x, 45, w, 14, "#6b5242");
-  for (let dx = 12; dx < w; dx += 12) {
-    p.rect(x + dx, 45, 1, 14, "#59443a");
-    p.rect(x + dx - 2, 49, 1, 3, "#c9b48a");
-    p.rect(x + dx + 2, 49, 1, 3, "#c9b48a");
-  }
-  p.rect(x, 58, w, 2, P.skirting);
-}
-
-function meetingRoom(p: Painter) {
-  const x = 190;
-  const w = 50;
-  p.rect(x, 5, w, 38, "#3b4560");
-  p.rect(x, 36, w, 1, "#56607c");
-  p.rect(x, 43, w, 16, "#535a6e");
-  // screen with a chart
-  p.rect(x + 12, 11, 24, 16, "#15171e");
-  p.rect(x + 13, 12, 22, 13, "#2e4f7a");
-  for (const [bx, bh, c] of [
-    [x + 16, 5, "#6fa8dc"],
-    [x + 20, 8, "#93c47d"],
-    [x + 24, 6, "#6fa8dc"],
-    [x + 28, 10, "#f6b26b"],
-  ] as const) {
-    p.rect(bx, 24 - bh, 3, bh, c);
-  }
-  p.rect(x + 14, 24, 20, 1, "#9fb6d4");
-  // chairs behind the table
-  for (const cx of [x + 9, x + 20, x + 31]) {
-    p.rect(cx, 39, 7, 6, "#2a2e3a");
-    p.rect(cx, 39, 7, 1, "#3d4250");
-  }
-  // table
-  p.rect(x + 6, 45, 38, 6, "#8d6748");
-  p.rect(x + 6, 45, 38, 1, "#a37a57");
-  p.rect(x + 6, 51, 38, 2, "#6b4c35");
-  p.rect(x + 10, 53, 2, 5, "#3a3f4c");
-  p.rect(x + 38, 53, 2, 5, "#3a3f4c");
-  // laptops and paper on the table
-  p.rect(x + 12, 46, 6, 2, "#c4c8d0");
-  p.rect(x + 30, 46, 6, 2, "#c4c8d0");
-  p.rect(x + 22, 47, 4, 2, "#f2f3f6");
-  // chairs in front
-  for (const cx of [x + 13, x + 29]) {
-    p.rect(cx, 52, 8, 6, "#2a2e3a");
-    p.rect(cx, 52, 8, 1, "#3d4250");
-  }
-  // a plant in the corner
-  p.rect(x + 42, 36, 5, 6, "#d6d2c9");
-  for (const [lx, ly] of [
-    [41, 30],
-    [43, 28],
-    [45, 31],
-    [44, 33],
-  ] as const) {
-    p.rect(x + lx, ly, 2, 5, "#3f8a57");
-  }
-  // glass: tint, glare, a frosted band, aluminium frame
-  p.blend(x, 5, w, 54, "#a8cbe8", 0.2);
-  for (const gx of [x + 4, x + 24]) {
-    for (let i = 0; i < 18; i += 1) {
-      p.blend(gx + i, 26 - i, 3, 1, "#ffffff", 0.16);
-      p.blend(gx + i + 6, 50 - i, 1, 1, "#ffffff", 0.12);
-    }
-  }
-  p.blend(x, 29, w, 4, "#e6eef6", 0.5);
-  p.rect(x, 5, w, 2, "#a9b1c0");
-  p.rect(x, 5, 2, 54, "#a9b1c0");
-  p.rect(x + 1, 7, 1, 52, "#7f8799");
-  p.rect(x + 24, 5, 2, 54, "#a9b1c0");
-  p.rect(x + 25, 7, 1, 52, "#7f8799");
-  p.rect(x + w - 2, 5, 2, 54, "#a9b1c0");
-  p.rect(x + 27, 36, 1, 8, "#e1e5eb");
-  p.rect(x, 58, w, 2, "#8a92a3");
-}
-
-function bin(p: Painter, x: number, y: number) {
-  p.blend(x, y + 10, 9, 2, P.black, 0.3);
-  p.rect(x, y, 8, 10, "#3a3f4c");
-  p.rect(x, y, 8, 1, "#565c6b");
-  p.rect(x + 1, y + 1, 1, 9, "#474d5b");
-  p.rect(x + 2, y - 1, 2, 1, P.white);
 }
 
 function pedestal(p: Painter, x: number, y: number, w: number, h: number) {
@@ -484,139 +527,151 @@ function pedestal(p: Painter, x: number, y: number, w: number, h: number) {
   p.rect(x, y + h - 1, w, 1, "#3a3f4c");
 }
 
-function deskBody(p: Painter, x: number, w: number) {
-  p.blend(x + 2, 104, w - 2, 4, P.black, 0.28);
-  p.rect(x, DESK_TOP, w, 8, P.wood);
-  p.rect(x, DESK_TOP, w, 1, P.woodLight);
-  const r = rng(x);
-  for (let i = 0; i < 10; i += 1) {
+/** A wooden desk top at `top` with drawer pedestals under both ends and legs between. */
+function deskBody(p: Painter, x: number, w: number, top: number, legs: readonly number[] = []) {
+  p.blend(x + 2, top + 28, w - 2, 3, P.black, 0.28);
+  p.rect(x, top, w, 8, P.wood);
+  p.rect(x, top, w, 1, P.woodLight);
+  const r = rng(x + top);
+  for (let i = 0; i < Math.floor(w / 9); i += 1) {
     const gx = x + Math.floor(r() * (w - 12));
-    const gy = DESK_TOP + 2 + Math.floor(r() * 5);
+    const gy = top + 2 + Math.floor(r() * 5);
     p.rect(gx, gy, 6 + Math.floor(r() * 8), 1, P.woodDark);
   }
-  p.rect(x, DESK_TOP + 8, w, 2, P.woodEdge);
-  p.rect(x, DESK_TOP + 10, w, 1, P.woodShadow);
-  pedestal(p, x + 2, 87, 18, 17);
-  pedestal(p, x + w - 20, 87, 18, 17);
-  p.rect(x + 20, 87, w - 40, 9, "#3b4151");
-  p.rect(x + 20, 87, w - 40, 1, "#30353f");
+  p.rect(x, top + 8, w, 2, P.woodEdge);
+  p.rect(x, top + 10, w, 1, P.woodShadow);
+  p.rect(x + 2, top + 11, w - 4, 8, "#3b4151");
+  p.rect(x + 2, top + 11, w - 4, 1, "#30353f");
+  pedestal(p, x + 2, top + 11, 16, 17);
+  pedestal(p, x + w - 18, top + 11, 16, 17);
+  for (const lx of legs) {
+    p.rect(lx, top + 11, 3, 17, "#3a3f4c");
+    p.rect(lx, top + 11, 1, 17, "#4b5160");
+  }
 }
 
 function monitorBody(p: Painter, x: number, y: number, w: number, h: number) {
   p.rect(x, y, w, h, P.bezel);
   p.rect(x, y, w, 1, P.bezelLight);
   p.rect(x + 1, y + 1, w - 2, h - 4, P.screenOff);
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < 4; i += 1) {
     p.set(x + 3 + i, y + h - 5 - i, P.glare);
     p.set(x + 4 + i, y + h - 5 - i, P.glare);
   }
   p.set(x + w - 3, y + h - 2, "#3fbf6f");
 }
 
-function codexDesk(p: Painter) {
-  const { x, w } = CODEX_DESK;
-  // the monitor arm: a pole and a bar behind the screens
-  p.rect(76, 63, 2, DESK_TOP - 63, P.arm);
-  p.rect(44, 65, 66, 2, P.arm);
-  deskBody(p, x, w);
-  CODEX_MONITORS.forEach((mx, i) => {
-    monitorBody(p, mx, MONITOR.y, MONITOR.w, MONITOR.h);
-    // the side screens turn inwards: a darker outer edge
-    if (i === 0) p.rect(mx, MONITOR.y + 1, 1, MONITOR.h - 1, "#0f1016");
-    if (i === 2) p.rect(mx + MONITOR.w - 1, MONITOR.y + 1, 1, MONITOR.h - 1, "#0f1016");
-  });
-  // keyboard, mouse pad, mouse
-  p.rect(69, 79, 19, 3, P.dark);
-  for (let kx = 70; kx < 87; kx += 2) {
-    p.set(kx, 79, "#4b505e");
-    p.set(kx + 1, 81, "#4b505e");
+function readingDesk(p: Painter) {
+  deskBody(p, 221, 92, BACK_TOP);
+  for (const seat of SEATS.review) {
+    p.rect(seat.x + 9, 61, 2, 5, P.arm);
+    p.rect(seat.x + 6, 65, 8, 1, "#2f333e");
+    monitorBody(p, seat.x, 47, 20, 14);
   }
-  p.rect(90, 79, 8, 4, "#2f4f6f");
-  p.rect(93, 80, 2, 2, P.dark);
-  // papers and a mug
-  p.rect(34, 78, 10, 4, "#d9dde4");
-  p.rect(35, 77, 10, 4, "#f2f3f6");
-  p.rect(37, 78, 6, 1, "#a9afbb");
-  p.rect(37, 80, 5, 1, "#a9afbb");
-  p.rect(104, 77, 4, 4, P.white);
-  p.rect(104, 77, 4, 1, "#6b4a35");
-  p.set(108, 78, P.white);
-  p.set(108, 79, P.white);
-  // desk lamp
-  p.rect(120, 81, 8, 2, "#2f333e");
-  p.rect(124, 64, 2, 17, "#2f333e");
-  p.rect(121, 63, 5, 2, "#2f333e");
+  // books and a reading lamp between the screens
+  for (const [by, c] of [
+    [64, "#2f5d7c"],
+    [62, "#8c3b3b"],
+    [60, "#c2a14a"],
+  ] as const) {
+    p.rect(246, by, 8, 2, c);
+    p.rect(246, by, 8, 1, mix(c, "#ffffff", 0.3));
+  }
+  p.rect(276, 64, 4, 2, "#2f333e");
+  p.rect(277, 54, 1, 10, "#2f333e");
+  p.rect(275, 52, 5, 2, "#2f333e");
+  // an open binder of printouts with red marks
+  p.rect(303, 63, 9, 3, "#f2f3f6");
+  p.rect(307, 63, 1, 3, "#c4c8d0");
+  p.rect(304, 64, 2, 1, "#c84a4a");
+  p.rect(309, 64, 2, 1, "#5c6478");
+}
+
+function devDesks(p: Painter) {
+  deskBody(p, 4, 147, FRONT_TOP, [50, 100]);
+  for (const seat of SEATS.build) {
+    const c = seat.x + 10;
+    // two monitors on one arm
+    p.rect(c - 1, 119, 2, 5, P.arm);
+    p.rect(c - 12, 120, 24, 1, P.arm);
+    monitorBody(p, c - 17, 106, 16, 13);
+    monitorBody(p, c + 1, 106, 16, 13);
+    // a mug and a notebook beside the screens
+    p.rect(c + 19, 120, 3, 3, P.white);
+    p.rect(c + 19, 120, 3, 1, "#6b4a35");
+    p.rect(c - 23, 121, 5, 3, "#f2f3f6");
+    p.rect(c - 22, 122, 3, 1, "#a9afbb");
+  }
+  // a small cactus on the middle desk
+  p.rect(96, 119, 4, 5, "#c56a4a");
+  p.rect(97, 114, 2, 5, "#3f8a57");
+  p.rect(96, 116, 1, 2, "#3f8a57");
+  // desk lamp at the right end
+  p.rect(145, 124, 6, 2, "#2f333e");
+  p.rect(148, 111, 2, 13, "#2f333e");
+  p.rect(146, 110, 4, 2, "#2f333e");
   p.rect(LAMP_HEAD.x, LAMP_HEAD.y, LAMP_HEAD.w, LAMP_HEAD.h, LAMP_OFF);
   p.rect(LAMP_HEAD.x + 1, LAMP_HEAD.y + LAMP_HEAD.h, LAMP_HEAD.w - 2, 1, "#3a3e49");
 }
 
-function claudeDesk(p: Painter) {
-  const { x, w } = CLAUDE_DESK;
-  deskBody(p, x, w);
-  // terminal on a stand
-  p.rect(175, 74, 4, 3, P.arm);
-  p.rect(170, 77, 14, 2, "#2f333e");
-  monitorBody(p, TERMINAL.x - 1, TERMINAL.y - 1, TERMINAL.w + 2, TERMINAL.h + 4);
-  // a sticky note on the bezel
-  p.rect(188, 55, 3, 3, "#f3d55b");
-  // warning light: a dome on a base
-  p.rect(BEACON.x - 2, 77, BEACON.w + 4, 2, P.dark);
-  p.rect(BEACON.x - 2, 77, BEACON.w + 4, 1, "#4a4e5a");
-  p.rect(BEACON.x - 1, 75, BEACON.w + 2, 2, "#8a909e");
-  p.rect(BEACON.x, BEACON.y, BEACON.w, BEACON.h, BEACON_OFF);
-  p.rect(BEACON.x + 1, BEACON.y - 1, BEACON.w - 2, 1, BEACON_OFF);
-  p.set(BEACON.x + 1, BEACON.y + 1, "#9a9fab");
-  // a stack of books
-  for (const [by, c] of [
-    [75, "#2f5d7c"],
-    [73, "#8c3b3b"],
-    [71, "#c2a14a"],
-  ] as const) {
-    p.rect(198, by, 11, 2, c);
-    p.rect(198, by, 11, 1, mix(c, "#ffffff", 0.3));
-    p.rect(207, by + 1, 1, 1, "#e8e2cf");
-  }
-  // phone
-  p.rect(186, 80, 3, 2, P.dark);
+function serverRack(p: Painter) {
+  const { x, y, w, h } = RACK;
+  p.blend(x + 2, y + h, w, 2, P.black, 0.35);
+  p.rect(x, y, w, h, "#1f2229");
+  p.rect(x, y, w, 1, "#3a3f4c");
+  p.rect(x, y, 1, h, "#30343f");
+  p.rect(x + w - 1, y, 1, h, "#15171c");
+  RACK_LEDS.forEach((led, i) => {
+    const uy = led.y - 2;
+    p.rect(x + 2, uy, w - 4, 5, i % 3 === 2 ? "#3a3f4c" : "#2e323c");
+    p.rect(x + 2, uy, w - 4, 1, "#454a57");
+    for (let vx = x + 4; vx < x + 12; vx += 2) p.rect(vx, uy + 2, 1, 2, "#1a1c22");
+    p.set(led.x, led.y, "#2a5a3a");
+    p.set(led.x + 2, led.y, "#2a5a3a");
+  });
+  p.rect(x + 1, y + h - 3, w - 2, 3, "#2a2d36");
 }
 
-function snakePlant(p: Painter, x: number, y: number) {
-  // tall planter
-  p.blend(x + 1, y + 34, 16, 2, P.black, 0.3);
-  p.rect(x + 2, y + 20, 14, 15, "#cfd3da");
-  p.rect(x + 2, y + 20, 14, 1, "#e6e8ec");
-  p.rect(x + 2, y + 20, 1, 15, "#e6e8ec");
-  p.rect(x + 14, y + 21, 2, 14, "#a9aeb8");
-  p.rect(x + 3, y + 21, 11, 1, "#5a4636");
-  // sword leaves
-  const leaves: [number, number][] = [
-    [4, 9],
-    [6, 2],
-    [8, 6],
-    [10, 0],
-    [12, 5],
-    [14, 10],
-  ];
-  for (const [lx, top] of leaves) {
-    const h = y + 21 - (y + top);
-    p.rect(x + lx, y + top + 1, 2, h - 1, "#3f7d50");
-    p.set(x + lx, y + top, "#3f7d50");
-    p.rect(x + lx, y + top + 2, 1, h - 3, "#5c9e66");
-    p.rect(x + lx + 1, y + top + 3, 1, h - 4, "#2e5e3e");
-    for (let i = top + 4; i < 19; i += 4) {
-      p.set(x + lx, y + i, "#8cc27e");
+function terminalDesks(p: Painter) {
+  deskBody(p, 198, 119, FRONT_TOP, [236, 276]);
+  for (const seat of SEATS.run) {
+    const c = seat.x + 10;
+    p.rect(c - 2, 120, 4, 4, P.arm);
+    p.rect(c - 6, 123, 12, 1, "#2f333e");
+    monitorBody(p, c - 14, 105, 28, 16);
+  }
+  // test bench: an oscilloscope with a green trace, a circuit board with probes
+  p.rect(230, 113, 11, 11, "#c4c8d0");
+  p.rect(230, 113, 11, 1, "#dfe2e7");
+  p.rect(231, 114, 7, 6, "#0b1510");
+  p.rect(231, 117, 2, 1, "#5ad17a");
+  p.rect(233, 116, 2, 1, "#5ad17a");
+  p.rect(235, 118, 2, 1, "#5ad17a");
+  p.rect(239, 115, 1, 1, "#e25555");
+  p.rect(239, 118, 1, 1, "#4a8fd6");
+  p.rect(270, 121, 11, 3, "#2f7a4a");
+  p.rect(272, 121, 3, 2, "#1a1c22");
+  p.rect(277, 122, 2, 1, "#c9b48a");
+  p.rect(269, 118, 1, 4, "#e25555");
+  p.rect(282, 117, 1, 5, "#1a1c22");
+}
+
+function chairs(p: Painter, zones: readonly Zone[]) {
+  const chair = emptyChair();
+  for (const zone of zones) {
+    for (const seat of SEATS[zone]) {
+      p.blend(seat.x + 3, seat.y + 30, 15, 2, P.black, 0.25);
+      p.blit(chair, seat.x, seat.y);
     }
   }
 }
 
 function bushPlant(p: Painter, x: number, y: number) {
   p.blend(x + 3, y + 32, 18, 2, P.black, 0.3);
-  // round dark planter
   p.rect(x + 5, y + 20, 14, 13, "#3a3f4c");
   p.rect(x + 4, y + 19, 16, 2, "#4f5566");
   p.rect(x + 5, y + 21, 1, 12, "#4a5060");
   p.rect(x + 17, y + 21, 2, 12, "#2c303b");
-  // leaves: dark blobs first, lighter ones up and to the left
   const blobs: [number, number, number, string][] = [
     [12, 13, 7, "#2e5e3e"],
     [6, 12, 5, "#2e5e3e"],

@@ -22,7 +22,7 @@ describe("fromClaudeHook: the mapping table", () => {
       hook_event_name: "UserPromptSubmit",
       prompt: "Write a function to calculate the factorial of a number",
     });
-    assert.deepEqual(event, { agent: "claude", type: "start", sessionId: "abc123", cwd: "/Users/me/my-project", ts: NOW });
+    assert.deepEqual(event, { agent: "claude", type: "start", sessionId: "abc123", cwd: "/Users/me/my-project", ts: NOW, zone: "plan" });
   });
 
   test("PreToolUse -> tool_start with the tool name, command text not copied", () => {
@@ -38,6 +38,7 @@ describe("fromClaudeHook: the mapping table", () => {
       sessionId: "abc123",
       cwd: "/Users/me/my-project",
       ts: NOW,
+      zone: "run",
       detail: "Bash",
     });
     assert.doesNotMatch(JSON.stringify(event), /npm test|Run test suite/);
@@ -167,7 +168,7 @@ describe("fromClaudeHook: the mapping table", () => {
   });
 
   test("unknown and unmapped events -> null", () => {
-    for (const name of ["SessionStart", "SessionEnd", "SubagentStop", "PreCompact", "Whatever", undefined]) {
+    for (const name of ["SessionStart", "SessionEnd", "PreCompact", "Whatever", undefined]) {
       assert.equal(map({ hook_event_name: name, source: "startup", reason: "other" }), null, String(name));
     }
   });
