@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CLAUDE_HOOK_EVENTS } from "@pixel-office/core";
+import { CLAUDE_HOOK_EVENTS, CODEX_HOOK_EVENTS } from "@pixel-office/core";
 
 import { unifiedDiff } from "../src/diff.js";
 import { claudeSettingsPath, detectWsl, EXIT_NEEDS_CONFIRMATION, type InitIo, type InitOptions, runInit } from "../src/init.js";
-import { addOurHooks, isOurHook, ourHook, removeOurHooks } from "../src/settings.js";
+import { addOurHooks, codexCommand, isOurHook, ourHook, removeOurHooks } from "../src/settings.js";
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "cli.js");
 
@@ -113,7 +113,7 @@ describe("settings merge", () => {
     assert.deepEqual(data.hooks.SessionStart, FIXTURE.hooks.SessionStart);
     for (const event of CLAUDE_HOOK_EVENTS) {
       const groups = data.hooks[event] ?? [];
-      assert.equal(groups.filter((g) => (g as { hooks: unknown[] }).hooks.some(isOurHook)).length, 1, event);
+      assert.equal(groups.filter((g) => (g as { hooks: unknown[] }).hooks.some((h) => isOurHook(h))).length, 1, event);
       assert.deepEqual(groups[groups.length - 1], { hooks: [ourHook({ nodePath: NODE, hookPath: hook })] });
     }
     // 2-space indent and the trailing newline
@@ -287,7 +287,7 @@ describe("init and uninit", () => {
     assert.ok(!text.includes("repo-a"), "old path gone");
     const after = JSON.parse(text) as { hooks: Record<string, Array<{ hooks: unknown[] }>> };
     for (const event of CLAUDE_HOOK_EVENTS) {
-      const ours = (after.hooks[event] ?? []).flatMap((g) => g.hooks).filter(isOurHook);
+      const ours = (after.hooks[event] ?? []).flatMap((g) => g.hooks).filter((h) => isOurHook(h));
       assert.equal(ours.length, 1, event);
       assert.deepEqual((ours[0] as { args: string[] }).args, [moved, "claude"]);
     }
@@ -389,6 +389,7 @@ describe("the pixel-office command", () => {
   function cli(args: string[], home: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
     const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, PIXEL_OFFICE_HOME: join(home, "po") };
     delete env.CLAUDE_CONFIG_DIR;
+    delete env.CODEX_HOME;
     // a developer running the tests inside WSL must not reach cmd.exe
     const wsl = detectWsl() ? ["--windows-home", "/mnt/c/Users/test"] : [];
     return new Promise((ok) => {
@@ -447,5 +448,150 @@ describe("the pixel-office command", () => {
   test("unknown options give a usage error", async () => {
     const result = await cli(["init", "--force"], join(root, "cli-usage"));
     assert.equal(result.code, 2);
+  });
+});
+
+describe("Codex hooks", () => {
+  const CODEX_FIXTURE = {
+    hooks: {
+      SessionStart: [{ hooks: [{ type: "command", command: "C:/Users/me/.orca/agent-hooks/codex-hook.cmd", timeout: 10 }] }],
+      PreToolUse: [{ hooks: [{ type: "command", command: "C:/Users/me/.orca/agent-hooks/codex-hook.cmd", timeout: 10 }] }],
+      Stop: [{ hooks: [{ type: "command", command: "C:/Users/me/.orca/agent-hooks/codex-hook.cmd", timeout: 10 }] }],
+    },
+  };
+  const CODEX_TEXT = JSON.stringify(CODEX_FIXTURE, null, 2) + "\n";
+  const WIN = { nodePath: NODE, hookPath: "D:\\a b\\packages\\cli\\dist\\src\\hook.js", windows: true };
+
+  test("Windows command: double quotes for cmd.exe, no args field", () => {
+    const handler = ourHook(WIN, "codex");
+    assert.deepEqual(handler, {
+      type: "command",
+      command: '"C:\\Program Files\\nodejs\\node.exe" "D:\\a b\\packages\\cli\\dist\\src\\hook.js" codex',
+      async: true,
+      timeout: 3,
+    });
+    assert.throws(() => codexCommand({ ...WIN, hookPath: "D:\\100%\\cli\\dist\\src\\hook.js" }), /%/);
+    assert.throws(() => codexCommand({ ...WIN, nodePath: 'C:\\a"b\\node.exe' }), /경로/);
+  });
+
+  test("POSIX command: single quotes, and /usr/bin/env in WSL", () => {
+    const posix = { nodePath: "/usr/bin/node", hookPath: "/home/me/it's/packages/cli/dist/src/hook.js" };
+    const quotedHook = "'/home/me/it'\\''s/packages/cli/dist/src/hook.js'";
+    assert.equal(codexCommand(posix), `'/usr/bin/node' ${quotedHook} codex`);
+    assert.equal(
+      codexCommand({ ...posix, pixelOfficeHome: "/mnt/c/Users/me/.pixel-office" }),
+      `/usr/bin/env 'PIXEL_OFFICE_HOME=/mnt/c/Users/me/.pixel-office' '/usr/bin/node' ${quotedHook} codex`,
+    );
+  });
+
+  test("the command really runs through the shell Codex uses", () => {
+    // a stand-in hook.js under a path with a space and a quote that reports what it got
+    const dir = join(root, "codex shell's", "packages", "cli", "dist", "src");
+    mkdirSync(dir, { recursive: true });
+    const report = join(root, "codex-shell-report.json");
+    const hook = join(dir, "hook.js");
+    writeFileSync(
+      hook,
+      `require("fs").writeFileSync(${JSON.stringify(report)}, JSON.stringify({ args: process.argv.slice(2), home: process.env.PIXEL_OFFICE_HOME ?? null }));\n`,
+    );
+    const windows = process.platform === "win32";
+    const target = windows
+      ? { nodePath: process.execPath, hookPath: hook, windows }
+      : { nodePath: process.execPath, hookPath: hook, pixelOfficeHome: "/tmp/po home" };
+    const command = codexCommand(target);
+    // codex-rs/hooks/src/engine/command_runner.rs: Windows `%COMSPEC% /C "<command>"` (raw),
+    // elsewhere `$SHELL -lc <command>`
+    const result = windows
+      ? spawnSync(process.env.ComSpec ?? "cmd.exe", ["/C", `"${command}"`], { windowsVerbatimArguments: true, encoding: "utf8" })
+      : spawnSync("/bin/sh", ["-lc", command], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    const got = JSON.parse(read(report)) as { args: string[]; home: string | null };
+    assert.deepEqual(got.args, ["codex"]);
+    assert.equal(got.home, windows ? (process.env.PIXEL_OFFICE_HOME ?? null) : "/tmp/po home");
+  });
+
+  test("isOurHook tells the Codex entry from the Claude one", () => {
+    const codex = ourHook(WIN, "codex");
+    const claude = ourHook({ nodePath: NODE, hookPath: WIN.hookPath });
+    assert.equal(isOurHook(codex, "codex"), true);
+    assert.equal(isOurHook(codex, "claude"), false);
+    assert.equal(isOurHook(claude, "codex"), false);
+    assert.equal(isOurHook(claude, "claude"), true);
+    assert.equal(isOurHook(ourHook({ nodePath: "/n", hookPath: "/r/packages/cli/dist/src/hook.js" }, "codex"), "codex"), true);
+    assert.equal(isOurHook(CODEX_FIXTURE.hooks.Stop[0]?.hooks[0], "codex"), false);
+  });
+
+  test("merge keeps Orca's hooks, is idempotent, and remove restores byte for byte", () => {
+    const added = addOurHooks(CODEX_TEXT, WIN, "codex");
+    const data = JSON.parse(added.after) as { hooks: Record<string, Array<{ hooks: unknown[] }>> };
+    for (const event of CODEX_HOOK_EVENTS) {
+      const groups = data.hooks[event] ?? [];
+      assert.deepEqual(groups[groups.length - 1], { hooks: [ourHook(WIN, "codex")] }, event);
+    }
+    assert.deepEqual(data.hooks.SessionStart, CODEX_FIXTURE.hooks.SessionStart);
+    assert.deepEqual(data.hooks.Stop?.[0], CODEX_FIXTURE.hooks.Stop[0]);
+    assert.equal(addOurHooks(added.after, WIN, "codex").changed, false);
+    // the Claude remover does not touch Codex entries and the other way round
+    assert.equal(removeOurHooks(added.after, "claude").changed, false);
+    assert.equal(removeOurHooks(added.after, "codex").after, CODEX_TEXT);
+  });
+
+  test("init --agent both writes both files with separate backups; uninit restores both", async () => {
+    const f = fake({ platform: "win32" }, FIXTURE_TEXT);
+    const codexFile = join(f.home, ".codex", "hooks.json");
+    mkdirSync(dirname(codexFile), { recursive: true });
+    writeFileSync(codexFile, CODEX_TEXT);
+    assert.equal(await runInit("init", YES, f.io), 0, f.err.join("\n"));
+    const codex = JSON.parse(read(codexFile)) as { hooks: Record<string, unknown[]> };
+    assert.deepEqual(Object.keys(codex.hooks), [
+      "SessionStart",
+      "PreToolUse",
+      "Stop",
+      "UserPromptSubmit",
+      "PostToolUse",
+      "PermissionRequest",
+      "PostModelRequest",
+    ]);
+    const stamp = backups(f.poHome)[0] ?? "";
+    assert.equal(read(join(f.poHome, "backups", stamp, "codex-hooks.json")), CODEX_TEXT);
+    assert.equal(read(join(f.poHome, "backups", stamp, "claude-settings.json")), FIXTURE_TEXT);
+    assert.match(f.out.join("\n"), /\/hooks/);
+    f.io.now = () => new Date("2026-11-09T07:00:00.000Z");
+    assert.equal(await runInit("uninit", YES, f.io), 0, f.err.join("\n"));
+    assert.equal(read(codexFile), CODEX_TEXT);
+    assert.equal(read(f.settings), FIXTURE_TEXT);
+  });
+
+  test("both skips Codex when ~/.codex is missing; --agent codex creates the file", async () => {
+    const f = fake({ platform: "linux" });
+    assert.equal(await runInit("init", YES, f.io), 0);
+    const codexFile = join(f.home, ".codex", "hooks.json");
+    assert.equal(existsSync(codexFile), false);
+    assert.match(f.out.join("\n"), /Codex 훅은 건너뜁니다/);
+    assert.equal(await runInit("init", { ...YES, agent: "codex" }, f.io), 0);
+    const data = JSON.parse(read(codexFile)) as { hooks: Record<string, unknown[]> };
+    assert.deepEqual(Object.keys(data.hooks), [...CODEX_HOOK_EVENTS]);
+    assert.equal(await runInit("uninit", { ...YES, agent: "claude" }, f.io), 0);
+    assert.ok(read(codexFile).includes("hook.js' codex"), "codex entries stay after uninit --agent claude");
+  });
+
+  test("CODEX_HOME moves the Codex file", async () => {
+    const f = fake({ platform: "win32" });
+    const codexHome = join(f.home, "custom-codex");
+    f.io.env = { ...f.io.env, CODEX_HOME: codexHome };
+    assert.equal(await runInit("init", { ...YES, agent: "codex" }, f.io), 0, f.err.join("\n"));
+    assert.equal(existsSync(join(codexHome, "hooks.json")), true);
+    assert.equal(existsSync(f.settings), false);
+  });
+
+  test("--agent with a bad value is a usage error", () => {
+    const home = join(root, "cli-agent");
+    mkdirSync(home, { recursive: true });
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, PIXEL_OFFICE_HOME: join(home, "po") };
+    delete env.CLAUDE_CONFIG_DIR;
+    delete env.CODEX_HOME;
+    const result = spawnSync(process.execPath, [CLI, "init", "--agent", "gemini", "--dry-run"], { env, encoding: "utf8" });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /--agent/);
   });
 });

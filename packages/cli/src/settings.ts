@@ -1,16 +1,24 @@
 /**
- * Adding and removing the Pixel Office hooks in Claude Code's user settings. Pure: text in,
- * text out, so `init` and `uninit` can show a diff before anything is written.
+ * Adding and removing the Pixel Office hooks in Claude Code's user settings
+ * (`~/.claude/settings.json`) and Codex's user hooks (`~/.codex/hooks.json`). Both files use
+ * the same shape: `hooks.<Event>[]` matcher groups, each with a `hooks[]` list of handlers.
+ * Pure: text in, text out, so `init` and `uninit` can show a diff before anything is written.
  *
- * Our hook handlers are recognised by their arguments: an element whose path ends in
- * `cli/dist/src/hook.js` followed by the element `claude` (exec form, which is what we
- * write). A shell-form command string containing `.../cli/dist/src/hook.js claude` is
- * recognised too, in case someone rewrote ours by hand. Every other hook is left alone.
+ * Our hook handlers are recognised by what they run: `.../cli/dist/src/hook.js` followed by
+ * the agent name, either as exec-form arguments (Claude) or inside a shell command string
+ * (Codex, or a Claude hook someone rewrote by hand). Every other hook is left alone.
  */
-import { CLAUDE_HOOK_EVENTS } from "@pixel-office/core";
+import { CLAUDE_HOOK_EVENTS, CODEX_HOOK_EVENTS } from "@pixel-office/core";
 
-/** Seconds. Claude Code does not enforce it on async hooks; it applies if async is ignored. */
+/** Seconds. The agents do not enforce it on async hooks; it applies if async is ignored. */
 export const HOOK_TIMEOUT_S = 3;
+
+export type HookAgent = "claude" | "codex";
+
+const EVENTS: Record<HookAgent, readonly string[]> = {
+  claude: CLAUDE_HOOK_EVENTS,
+  codex: CODEX_HOOK_EVENTS,
+};
 
 export interface HookTarget {
   /** Absolute path of the node binary (`process.execPath` of the node running init). */
@@ -19,15 +27,19 @@ export interface HookTarget {
   hookPath: string;
   /** WSL only: the Windows `.pixel-office` folder as a `/mnt/<drive>/...` path. */
   pixelOfficeHome?: string;
+  /** Windows host: Codex runs hook commands with `cmd.exe /C`, elsewhere with `$SHELL -lc`. */
+  windows?: boolean;
 }
 
 export interface CommandHook {
   type: "command";
   command: string;
-  args: string[];
+  args?: string[];
   async: true;
   timeout: number;
 }
+
+export class SettingsError extends Error {}
 
 /**
  * Exec form (`command` plus `args`): Claude Code spawns the program directly with no shell,
@@ -35,7 +47,10 @@ export interface CommandHook {
  * whether Windows runs shell-form hooks in Git Bash or PowerShell. In WSL the variable is set
  * with `/usr/bin/env`, because there is no shell to read `VAR=value`.
  */
-export function ourHook(target: HookTarget): CommandHook {
+export function ourHook(target: HookTarget, agent: HookAgent = "claude"): CommandHook {
+  if (agent === "codex") {
+    return { type: "command", command: codexCommand(target), async: true, timeout: HOOK_TIMEOUT_S };
+  }
   const run = [target.hookPath, "claude"];
   return target.pixelOfficeHome === undefined
     ? { type: "command", command: target.nodePath, args: run, async: true, timeout: HOOK_TIMEOUT_S }
@@ -48,14 +63,38 @@ export function ourHook(target: HookTarget): CommandHook {
       };
 }
 
+/**
+ * Codex has no exec form: `command` is one string run by a shell. On Windows Codex runs
+ * `cmd.exe /C "<command>"`; cmd drops the outer pair of quotes and runs
+ * `"<node>" "<hook.js>" codex`. Double quotes keep spaces, but cmd still expands `%VAR%`
+ * inside them, and a `"` cannot be quoted, so such paths are refused. Elsewhere the command
+ * runs in `$SHELL -lc`; single quotes are literal in sh, bash, zsh and fish, and
+ * `/usr/bin/env` sets the variable without relying on the shell's `VAR=value` syntax.
+ */
+export function codexCommand(target: HookTarget): string {
+  if (target.windows === true) {
+    for (const path of [target.nodePath, target.hookPath]) {
+      if (/["%\r\n]/.test(path)) {
+        throw new SettingsError(`Codex 훅 명령에 쓸 수 없는 문자(", %, 줄바꿈)가 경로에 있습니다: ${path}`);
+      }
+    }
+    return `"${target.nodePath}" "${target.hookPath}" codex`;
+  }
+  const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+  const run = `${quote(target.nodePath)} ${quote(target.hookPath)} codex`;
+  return target.pixelOfficeHome === undefined
+    ? run
+    : `/usr/bin/env ${quote(`PIXEL_OFFICE_HOME=${target.pixelOfficeHome}`)} ${run}`;
+}
+
 const HOOK_SUFFIX = "/cli/dist/src/hook.js";
 
 function isHookPath(value: unknown): boolean {
   return typeof value === "string" && value.replace(/\\/g, "/").endsWith(HOOK_SUFFIX);
 }
 
-/** True for a hook handler that Pixel Office wrote. */
-export function isOurHook(handler: unknown): boolean {
+/** True for a hook handler that Pixel Office wrote for this agent. */
+export function isOurHook(handler: unknown, agent: HookAgent = "claude"): boolean {
   if (typeof handler !== "object" || handler === null) {
     return false;
   }
@@ -65,15 +104,15 @@ export function isOurHook(handler: unknown): boolean {
   }
   if (Array.isArray(h.args)) {
     const args: unknown[] = h.args;
-    return args.some((arg, index) => isHookPath(arg) && args[index + 1] === "claude");
+    return args.some((arg, index) => isHookPath(arg) && args[index + 1] === agent);
   }
-  return (
-    typeof h.command === "string" &&
-    /cli[\\/]+dist[\\/]+src[\\/]+hook\.js["']?\s+["']?claude(["'\s]|$)/.test(h.command)
-  );
+  return typeof h.command === "string" && COMMAND_PATTERN[agent].test(h.command);
 }
 
-export class SettingsError extends Error {}
+const COMMAND_PATTERN: Record<HookAgent, RegExp> = {
+  claude: /cli[\\/]+dist[\\/]+src[\\/]+hook\.js["']?\s+["']?claude(["'\s]|$)/,
+  codex: /cli[\\/]+dist[\\/]+src[\\/]+hook\.js["']?\s+["']?codex(["'\s]|$)/,
+};
 
 interface Format {
   bom: boolean;
@@ -136,12 +175,12 @@ function serialize(data: Json, format: Format): string {
 }
 
 /** A matcher group with our handlers taken out; null when nothing else was in it. */
-function withoutOurs(group: unknown): { group: unknown; removed: number } {
+function withoutOurs(group: unknown, agent: HookAgent): { group: unknown; removed: number } {
   if (typeof group !== "object" || group === null || !Array.isArray((group as Json).hooks)) {
     return { group, removed: 0 };
   }
   const handlers = (group as Json).hooks as unknown[];
-  const kept = handlers.filter((h) => !isOurHook(h));
+  const kept = handlers.filter((h) => !isOurHook(h, agent));
   const removed = handlers.length - kept.length;
   if (removed === 0) {
     return { group, removed };
@@ -164,11 +203,11 @@ export interface Change {
  * as it is (so init twice changes nothing); stale entries of ours (the repo moved, node
  * changed) are replaced where the first one was and the rest removed.
  */
-export function addOurHooks(text: string | null, target: HookTarget): Change {
+export function addOurHooks(text: string | null, target: HookTarget, agent: HookAgent = "claude"): Change {
   const { data, format } = parse(text);
-  const wanted: Json = { hooks: [ourHook(target)] };
+  const wanted: Json = { hooks: [ourHook(target, agent)] };
   const hooks: Json = (data.hooks as Json | undefined) ?? {};
-  for (const event of CLAUDE_HOOK_EVENTS) {
+  for (const event of EVENTS[agent]) {
     const groups = (hooks[event] as unknown[] | undefined) ?? [];
     const next: unknown[] = [];
     let placed = false;
@@ -178,7 +217,7 @@ export function addOurHooks(text: string | null, target: HookTarget): Change {
         placed = true;
         continue;
       }
-      const stripped = withoutOurs(group);
+      const stripped = withoutOurs(group, agent);
       if (stripped.removed > 0 && !placed) {
         next.push(wanted);
         placed = true;
@@ -201,7 +240,7 @@ export function addOurHooks(text: string | null, target: HookTarget): Change {
  * Removes our handlers. A matcher group, an event array or the `hooks` object is removed
  * only when it became empty because of us; ones that were already empty stay.
  */
-export function removeOurHooks(text: string | null): Change & { removed: number } {
+export function removeOurHooks(text: string | null, agent: HookAgent = "claude"): Change & { removed: number } {
   if (text === null) {
     return { before: null, after: "", changed: false, removed: 0 };
   }
@@ -214,7 +253,7 @@ export function removeOurHooks(text: string | null): Change & { removed: number 
       const next: unknown[] = [];
       let removedHere = 0;
       for (const group of groups) {
-        const stripped = withoutOurs(group);
+        const stripped = withoutOurs(group, agent);
         removedHere += stripped.removed;
         if (stripped.group !== null) {
           next.push(stripped.group);

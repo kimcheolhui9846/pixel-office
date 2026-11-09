@@ -29,7 +29,7 @@
 
 - Orca가 띄운 Codex가 세션 로그를 어디에 쓰는지(Orca 전용 `CODEX_HOME`).
 - Orca 내장 브라우저에서 실제 WebSocket 연결(생성자는 있음을 확인).
-- Codex 훅에서 셸 명령의 종료 코드를 얻을 수 있는지.
+- ~~Codex 훅에서 셸 명령의 종료 코드를 얻을 수 있는지.~~ 얻을 수 없다(8절, 소스 확인).
 
 ## 4. 상태 머신 (1단계, `packages/core/src/state.ts`)
 
@@ -219,3 +219,50 @@
 - "문제 발생" 장면의 실제 세션 캡처. 서버 기록으로는 확인했고, 그림은 3단계에서 확인했다.
 - async 훅의 순서 바뀜이 화면에 드러나는지.
 - 실제 WSL에서 `cmd.exe`와 `wslpath`로 폴더를 찾는 부분. 이 PC에서는 돌려 보지 않았고, 테스트는 가짜 함수를 쓴다.
+
+## 8. Codex 훅 (5단계)
+
+codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/codex/hooks, 2026-11-09 현재 learn.chatgpt.com/docs/hooks로 이동), "소스"는 openai/codex `main`의 `codex-rs`다. 설치된 0.167.0 바이너리에 `PostModelRequest`, `PermissionRequest`, `commandWindows`, `dangerously-bypass-hook-trust` 문자열이 들어 있는 것은 확인했다.
+
+### 8.1 Claude Code와 다른 점
+
+- **설정 파일:** `~/.codex/hooks.json`(`CODEX_HOME`이 있으면 그 폴더)이다. 모양은 Claude Code와 같다(`hooks.<Event>[]` 그룹, 그 안의 `hooks[]` 핸들러). `config.toml`의 `[hooks]` 표와 함께 있으면 Codex가 합치므로, 우리는 `hooks.json`만 고친다.
+- **신뢰가 필요하다(문서):** 사용자 훅은 Codex의 `/hooks`에서 신뢰해야 실행된다. 신뢰는 훅의 해시에 묶이므로, 명령이 바뀌면(저장소 이동, node 변경) 다시 신뢰해야 한다. `init`은 적용 뒤 이를 안내한다.
+- **exec form이 없다(문서, 소스):** `command`는 문자열 하나이고 셸이 실행한다. Windows에서는 `%COMSPEC% /C "<command>"`(바깥 따옴표를 붙여 그대로 넘김), 그 밖에서는 `$SHELL -lc <command>`다(`codex-rs/hooks/src/engine/command_runner.rs`).
+- **종료 코드가 없다(소스):** 셸 도구의 `tool_name`은 `Bash`이고, `PostToolUse`의 `tool_response`는 출력 문자열뿐이다(`unified_exec_tests.rs`). `PostToolUseFailure`도 없다. 그래서 Codex는 도구 실패를 알 수 없고, "테스트 통과" 추정도 하지 않는다.
+- **stdout(문서):** `UserPromptSubmit`과 `SessionStart`의 평문 stdout은 모델 컨텍스트에 들어가고, `Stop`의 평문은 잘못된 출력이다. 종료 코드 2는 동작을 막는다. 우리 훅은 아무것도 출력하지 않고 항상 0으로 끝나므로 해당 없다.
+- **async(문서):** `"async": true`면 백그라운드에서 돈다(세션당 8개까지). 세션이 끝날 때 남은 백그라운드 훅은 취소되므로 마지막 이벤트가 빠질 수 있다.
+
+### 8.2 대응표 (`packages/core/src/codex.ts`, 순수 함수 `fromCodexHook`)
+
+| Codex 이벤트 | 사무실 이벤트 | detail |
+|---|---|---|
+| `UserPromptSubmit` | start | 없음 (프롬프트는 버림) |
+| `PreToolUse` | tool_start | 도구 이름 |
+| `PostToolUse` | tool_end | 도구 이름 (출력은 버림) |
+| `PermissionRequest` | waiting | 도구 이름 |
+| `PostModelRequest` (`status: "failed"`만) | error | `model` (오류 문구는 버림) |
+| `Stop` | stop | 없음 (마지막 메시지는 버림) |
+
+- 등록하지 않는 것: `SessionStart`(아직 일을 시작하지 않음), `SessionEnd`(항상 동기로 돌아 세션 종료를 늦춤), `Interrupt`(사용자가 멈춘 것을 "완료"로 그리면 틀리다. 30초 뒤 쉬는 중으로 돌아간다), 압축·하위 에이전트 이벤트.
+- `PostModelRequest`는 모델 요청마다 오므로 훅이 그만큼 더 실행된다. 백그라운드라 Codex를 늦추지 않는다.
+
+### 8.3 명령 문자열 (`packages/cli/src/settings.ts`, `codexCommand`)
+
+- Windows: `"<node>" "<hook.js>" codex`. cmd는 `/C` 뒤의 바깥 따옴표 한 쌍을 벗기고 나머지를 실행한다. 큰따옴표 안에서도 `%VAR%`는 펼쳐지고 `"`는 넣을 수 없어서, 경로에 `"`, `%`, 줄바꿈이 있으면 `init`이 거부한다.
+- 그 밖(Linux, WSL): `'<node>' '<hook.js>' codex`. 작은따옴표는 sh, bash, zsh, fish에서 모두 문자 그대로다. 경로 안의 `'`는 `'\''`로 쓴다. WSL에서는 앞에 `/usr/bin/env 'PIXEL_OFFICE_HOME=/mnt/c/...'`를 붙인다(셸의 `VAR=값` 문법에 기대지 않음).
+- 우리 항목 표시: 명령 문자열에 `cli/dist/src/hook.js` 다음 `codex`가 오면 우리 것이다. Claude 항목(`claude`)과 서로 건드리지 않는다.
+- 테스트: 공백과 `'`가 든 경로로 만든 명령을 Codex와 같은 방식(Windows `cmd.exe /C "..."`, 그 밖 `/bin/sh -lc`)으로 실제 실행해 인자가 `codex` 하나로 전달되는지 확인한다.
+
+### 8.4 `init` / `uninit`
+
+- `--agent claude|codex|both`(기본 both). 파일마다 diff, 확인, 백업, 쓰기를 따로 한다. 한 번 실행의 백업은 한 폴더(`backups/<시각>/claude-settings.json`, `codex-hooks.json`)에 모인다.
+- both에서 Codex 폴더가 없으면 Codex는 건너뛴다. `--agent codex`는 파일을 새로 만든다.
+- 실제 `~/.codex/hooks.json`에 `--dry-run`을 돌린 결과: 기존 5개 이벤트(UserPromptSubmit, PreToolUse, PermissionRequest, PostToolUse, Stop)의 Orca 그룹 뒤에 우리 그룹을 덧붙이고, `PostModelRequest`만 새로 생긴다. 지워지는 줄은 없고 파일 수정 시각도 그대로였다.
+
+### 8.5 확인하지 못한 것
+
+- 실제 Codex 세션에서 훅이 실행되는지(신뢰 절차 포함). 설치 버전의 동작이 `main` 소스와 같은지.
+- `PermissionRequest`가 승인 창마다 오는지, 자동 승인 모드에서는 오지 않는지.
+- `PostModelRequest`의 `failed`가 재시도 중인 일시 오류에도 오는지. 그렇다면 잠깐 "문제 발생"이 보였다가 다음 이벤트로 돌아간다.
+- Orca가 띄운 Codex가 다른 `CODEX_HOME`을 쓰는지. 그렇다면 그 폴더에도 `init`이 필요하다.
