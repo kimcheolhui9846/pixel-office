@@ -10,7 +10,7 @@ import { CLAUDE_HOOK_EVENTS, CODEX_HOOK_EVENTS } from "@pixel-office/core";
 
 import { unifiedDiff } from "../src/diff.js";
 import { claudeSettingsPath, detectWsl, EXIT_NEEDS_CONFIRMATION, type InitIo, type InitOptions, runInit } from "../src/init.js";
-import { addOurHooks, codexCommand, isOurHook, ourHook, removeOurHooks } from "../src/settings.js";
+import { addOurHooks, codexCommand, codexWrapperScript, isOurHook, ourHook, removeOurHooks } from "../src/settings.js";
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "cli.js");
 
@@ -460,17 +460,37 @@ describe("Codex hooks", () => {
     },
   };
   const CODEX_TEXT = JSON.stringify(CODEX_FIXTURE, null, 2) + "\n";
-  const WIN = { nodePath: NODE, hookPath: "D:\\a b\\packages\\cli\\dist\\src\\hook.js", windows: true };
+  const WRAPPER = "C:\\Users\\me\\.pixel-office\\pixel-office-codex-hook.cmd";
+  const WIN = {
+    nodePath: NODE,
+    hookPath: "D:\\a b\\packages\\cli\\dist\\src\\hook.js",
+    windows: true,
+    codexWrapper: WRAPPER,
+  };
 
-  test("Windows command: double quotes for cmd.exe, synchronous, no args field", () => {
-    const handler = ourHook(WIN, "codex");
-    assert.deepEqual(handler, {
+  test("Windows command: the bare wrapper path, synchronous, no args field", () => {
+    assert.deepEqual(ourHook(WIN, "codex"), {
       type: "command",
-      command: '"C:\\Program Files\\nodejs\\node.exe" "D:\\a b\\packages\\cli\\dist\\src\\hook.js" codex',
+      command: "C:/Users/me/.pixel-office/pixel-office-codex-hook.cmd",
       timeout: 3,
     });
-    assert.throws(() => codexCommand({ ...WIN, hookPath: "D:\\100%\\cli\\dist\\src\\hook.js" }), /%/);
-    assert.throws(() => codexCommand({ ...WIN, nodePath: 'C:\\a"b\\node.exe' }), /경로/);
+    // a wrapper path no shell can run unquoted is refused
+    assert.throws(() => codexCommand({ ...WIN, codexWrapper: "C:\\Users\\Jane Doe\\.pixel-office\\x.cmd" }), /PIXEL_OFFICE_HOME/);
+    assert.throws(() => codexCommand({ ...WIN, codexWrapper: "C:\\a&b\\x.cmd" }), /PIXEL_OFFICE_HOME/);
+    assert.equal(codexCommand({ ...WIN, codexWrapper: "C:\\Users\\RUNNER~1\\x.cmd" }), "C:/Users/RUNNER~1/x.cmd");
+  });
+
+  test("the wrapper quotes node and hook.js, echoes nothing and always exits 0", () => {
+    const script = codexWrapperScript(WIN);
+    assert.deepEqual(script.split("\r\n"), [
+      "@echo off",
+      "rem Pixel Office: runs the Codex hook. Written by `pixel-office init`, removed by `uninit`.",
+      '"C:\\Program Files\\nodejs\\node.exe" "D:\\a b\\packages\\cli\\dist\\src\\hook.js" codex',
+      "exit /b 0",
+      "",
+    ]);
+    assert.throws(() => codexWrapperScript({ ...WIN, hookPath: "D:\\100%\\cli\\dist\\src\\hook.js" }), /%/);
+    assert.throws(() => codexWrapperScript({ ...WIN, nodePath: 'C:\\a"b\\node.exe' }), /경로/);
   });
 
   test("POSIX command: single quotes, and /usr/bin/env in WSL", () => {
@@ -483,7 +503,7 @@ describe("Codex hooks", () => {
     );
   });
 
-  test("the command really runs through the shell Codex uses", () => {
+  test("the command really runs, with stdin, in the shells Codex may use", () => {
     // a stand-in hook.js under a path with a space and a quote that reports what it got
     const dir = join(root, "codex shell's", "packages", "cli", "dist", "src");
     mkdirSync(dir, { recursive: true });
@@ -491,29 +511,55 @@ describe("Codex hooks", () => {
     const hook = join(dir, "hook.js");
     writeFileSync(
       hook,
-      `require("fs").writeFileSync(${JSON.stringify(report)}, JSON.stringify({ args: process.argv.slice(2), home: process.env.PIXEL_OFFICE_HOME ?? null }));\n`,
+      `const fs = require("fs");\n` +
+        `fs.writeFileSync(${JSON.stringify(report)}, JSON.stringify({ args: process.argv.slice(2), ` +
+        `home: process.env.PIXEL_OFFICE_HOME ?? null, stdin: fs.readFileSync(0, "utf8") }));\n`,
     );
-    const windows = process.platform === "win32";
-    const target = windows
-      ? { nodePath: process.execPath, hookPath: hook, windows }
-      : { nodePath: process.execPath, hookPath: hook, pixelOfficeHome: "/tmp/po home" };
-    const command = codexCommand(target);
-    // codex-rs/hooks/src/engine/command_runner.rs: Windows `%COMSPEC% /C "<command>"` (raw),
-    // elsewhere `$SHELL -lc <command>`
-    const result = windows
-      ? spawnSync(process.env.ComSpec ?? "cmd.exe", ["/C", `"${command}"`], { windowsVerbatimArguments: true, encoding: "utf8" })
-      : spawnSync("/bin/sh", ["-lc", command], { encoding: "utf8" });
-    assert.equal(result.status, 0, result.stderr);
-    const got = JSON.parse(read(report)) as { args: string[]; home: string | null };
-    assert.deepEqual(got.args, ["codex"]);
-    assert.equal(got.home, windows ? (process.env.PIXEL_OFFICE_HOME ?? null) : "/tmp/po home");
+    const input = '{"hook_event_name":"Stop"}';
+    const check = (label: string, result: { status: number | null; stdout: string; stderr: string }, home: string | null) => {
+      assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+      assert.equal(result.stdout.trim(), "", `${label} printed something`);
+      const got = JSON.parse(read(report)) as { args: string[]; home: string | null; stdin: string };
+      assert.deepEqual(got.args, ["codex"], label);
+      assert.equal(got.stdin, input, label);
+      assert.equal(got.home, home, label);
+      rmSync(report);
+    };
+    if (process.platform === "win32") {
+      const wrapper = join(root, "wrap", "pixel-office-codex-hook.cmd");
+      mkdirSync(dirname(wrapper), { recursive: true });
+      const target = { nodePath: process.execPath, hookPath: hook, windows: true, codexWrapper: wrapper };
+      writeFileSync(wrapper, codexWrapperScript(target));
+      const command = codexCommand(target);
+      const home = process.env.PIXEL_OFFICE_HOME ?? null;
+      // codex-rs command_runner.rs falls back to `%COMSPEC% /C "<command>"` (raw)...
+      check(
+        "cmd",
+        spawnSync(process.env.ComSpec ?? "cmd.exe", ["/C", `"${command}"`], { windowsVerbatimArguments: true, input, encoding: "utf8" }),
+        home,
+      );
+      // ...but codex-cli 0.167.0 ran our hooks in PowerShell (DESIGN.md 8.6)
+      check(
+        "powershell",
+        spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { input, encoding: "utf8" }),
+        home,
+      );
+    } else {
+      const command = codexCommand({ nodePath: process.execPath, hookPath: hook, pixelOfficeHome: "/tmp/po home" });
+      check("sh", spawnSync("/bin/sh", ["-lc", command], { input, encoding: "utf8" }), "/tmp/po home");
+    }
   });
 
-  test("an earlier async Codex entry is replaced by the synchronous one in place", () => {
-    const old = { ...ourHook(WIN, "codex"), async: true };
-    const text = JSON.stringify({ hooks: { Stop: [{ hooks: [old] }] } }, null, 2) + "\n";
-    const after = JSON.parse(addOurHooks(text, WIN, "codex").after) as { hooks: Record<string, unknown[]> };
-    assert.deepEqual(after.hooks.Stop, [{ hooks: [ourHook(WIN, "codex")] }]);
+  test("earlier Codex entries (async, or node plus hook.js) are replaced by the wrapper in place", () => {
+    const older = [
+      { type: "command", command: '"C:\\n\\node.exe" "D:\\r\\packages\\cli\\dist\\src\\hook.js" codex', async: true, timeout: 3 },
+      { type: "command", command: '"C:\\n\\node.exe" "D:\\r\\packages\\cli\\dist\\src\\hook.js" codex', timeout: 3 },
+    ];
+    for (const old of older) {
+      const text = JSON.stringify({ hooks: { Stop: [{ hooks: [old] }] } }, null, 2) + "\n";
+      const after = JSON.parse(addOurHooks(text, WIN, "codex").after) as { hooks: Record<string, unknown[]> };
+      assert.deepEqual(after.hooks.Stop, [{ hooks: [ourHook(WIN, "codex")] }]);
+    }
   });
 
   test("isOurHook tells the Codex entry from the Claude one", () => {
@@ -562,10 +608,19 @@ describe("Codex hooks", () => {
     assert.equal(read(join(f.poHome, "backups", stamp, "codex-hooks.json")), CODEX_TEXT);
     assert.equal(read(join(f.poHome, "backups", stamp, "claude-settings.json")), FIXTURE_TEXT);
     assert.match(f.out.join("\n"), /\/hooks/);
+    const wrapper = join(f.poHome, "pixel-office-codex-hook.cmd");
+    assert.match(read(wrapper), /^@echo off\r\n/);
+    // a moved repo changes only the wrapper; the trusted hook command stays the same
+    f.io.hookPath = repo("repo-moved-for-wrapper");
+    f.out.length = 0;
+    assert.equal(await runInit("init", { ...YES, agent: "codex" }, f.io), 0, f.err.join("\n"));
+    assert.ok(read(wrapper).includes("repo-moved-for-wrapper"));
+    assert.doesNotMatch(f.out.join("\n"), /\/hooks/);
     f.io.now = () => new Date("2026-11-09T07:00:00.000Z");
     assert.equal(await runInit("uninit", YES, f.io), 0, f.err.join("\n"));
     assert.equal(read(codexFile), CODEX_TEXT);
     assert.equal(read(f.settings), FIXTURE_TEXT);
+    assert.equal(existsSync(wrapper), false, "wrapper removed");
   });
 
   test("both skips Codex when ~/.codex is missing; --agent codex creates the file", async () => {

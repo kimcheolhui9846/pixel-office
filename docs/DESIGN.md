@@ -231,7 +231,7 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 - **exec form이 없다(문서, 소스):** `command`는 문자열 하나이고 셸이 실행한다. Windows에서는 `%COMSPEC% /C "<command>"`(바깥 따옴표를 붙여 그대로 넘김), 그 밖에서는 `$SHELL -lc <command>`다(`codex-rs/hooks/src/engine/command_runner.rs`).
 - **종료 코드가 없다(소스):** 셸 도구의 `tool_name`은 `Bash`이고, `PostToolUse`의 `tool_response`는 출력 문자열뿐이다(`unified_exec_tests.rs`). `PostToolUseFailure`도 없다. 그래서 Codex는 도구 실패를 알 수 없고, "테스트 통과" 추정도 하지 않는다.
 - **stdout(문서):** `UserPromptSubmit`과 `SessionStart`의 평문 stdout은 모델 컨텍스트에 들어가고, `Stop`의 평문은 잘못된 출력이다. 종료 코드 2는 동작을 막는다. 우리 훅은 아무것도 출력하지 않고 항상 0으로 끝나므로 해당 없다.
-- **async(문서):** `"async": true`면 백그라운드에서 돈다(세션당 8개까지). 하지만 실제 세션에서는 async 핸들러가 실행되지 않아서(8.6) Codex 훅은 동기로 둔다.
+- **async(문서):** `"async": true`면 백그라운드에서 돈다(세션당 8개까지). 실제 세션에서 동작이 확인된 것은 동기 훅뿐이라 Codex 훅은 동기로 둔다(8.6).
 
 ### 8.2 대응표 (`packages/core/src/codex.ts`, 순수 함수 `fromCodexHook`)
 
@@ -249,7 +249,7 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 
 ### 8.3 명령 문자열 (`packages/cli/src/settings.ts`, `codexCommand`)
 
-- Windows: `"<node>" "<hook.js>" codex`. cmd는 `/C` 뒤의 바깥 따옴표 한 쌍을 벗기고 나머지를 실행한다. 큰따옴표 안에서도 `%VAR%`는 펼쳐지고 `"`는 넣을 수 없어서, 경로에 `"`, `%`, 줄바꿈이 있으면 `init`이 거부한다.
+- Windows: 훅 명령은 래퍼 파일 경로 하나다(`C:/Users/<이름>/.pixel-office/pixel-office-codex-hook.cmd`, `/`로 쓰고 공백 없음). 실제 Codex가 훅을 PowerShell로 실행했고(8.6), PowerShell은 따옴표로 시작하는 줄을 문자열로 읽기 때문이다. 따옴표 없는 경로 하나는 cmd, PowerShell, Git Bash 모두 같은 방식으로 실행한다(Orca의 Codex 훅도 이 방식). 래퍼 안에서 node와 hook.js를 큰따옴표로 감싸 실행하고(`@echo off`, 항상 `exit /b 0`), 래퍼 경로에 공백이나 특수 문자가 있으면 `init`이 거부하고 `PIXEL_OFFICE_HOME`을 바꾸라고 안내한다. 래퍼 안에서는 `%`가 변수로 펼쳐지므로 node나 hook.js 경로에 `%`나 `"`가 있어도 거부한다. 저장소를 옮기면 래퍼만 바뀌고 훅 명령은 그대로라 다시 신뢰할 필요가 없다.
 - 그 밖(Linux, WSL): `'<node>' '<hook.js>' codex`. 작은따옴표는 sh, bash, zsh, fish에서 모두 문자 그대로다. 경로 안의 `'`는 `'\''`로 쓴다. WSL에서는 앞에 `/usr/bin/env 'PIXEL_OFFICE_HOME=/mnt/c/...'`를 붙인다(셸의 `VAR=값` 문법에 기대지 않음).
 - 우리 항목 표시: 명령 문자열에 `cli/dist/src/hook.js` 다음 `codex`가 오면 우리 것이다. Claude 항목(`claude`)과 서로 건드리지 않는다.
 - 테스트: 공백과 `'`가 든 경로로 만든 명령을 Codex와 같은 방식(Windows `cmd.exe /C "..."`, 그 밖 `/bin/sh -lc`)으로 실제 실행해 인자가 `codex` 하나로 전달되는지 확인한다.
@@ -262,7 +262,7 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 
 ### 8.5 확인하지 못한 것
 
-- 동기로 바꾼 훅이 실제 세션에서 실행되는지(8.6 다음 확인).
+- 래퍼 방식 훅이 실제 세션에서 실행되는지(8.6 다음 확인). async로 되돌려도 되는지.
 - `PermissionRequest`가 승인 창마다 오는지, 자동 승인 모드에서는 오지 않는지.
 - `PostModelRequest`의 `failed`가 재시도 중인 일시 오류에도 오는지. 그렇다면 잠깐 "문제 발생"이 보였다가 다음 이벤트로 돌아간다.
 
@@ -270,5 +270,6 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 
 - **Orca 안의 Codex는 다른 `CODEX_HOME`을 쓴다.** `%APPDATA%\orca\codex-accounts\<id>\home`이다. Orca가 `~/.codex/hooks.json`을 이 폴더로 복사해서, `init`이 넣은 훅이 그대로 나타났다. 신뢰 기록은 그 폴더의 `config.toml`(`[hooks.state]`)에 남는다.
 - **신뢰:** Codex 시작 화면에 "Hooks need review"가 떴고, `/hooks`에서 우리 훅 6개를 신뢰했다. 화면에는 Async, 3s로 표시됐다.
-- **async 훅은 실행되지 않았다.** 작업 하나를 끝까지 돌리는 동안 서버에 Codex 이벤트가 하나도 오지 않았고, `PIXEL_OFFICE_DEBUG=1`의 로그 파일도 생기지 않았다. 같은 파일의 Orca 훅(동기)은 실행됐다(Orca가 Bash 실행과 완료를 기록). 같은 명령을 `cmd.exe /C "..."`로, 환경 변수를 거의 비운 채 직접 실행하면 서버가 받았다(204). Codex 로그에는 이벤트마다 훅 실행이 하나씩만 기록됐다.
-- **결론(추정):** 이 버전은 Windows에서 async 핸들러를 실행하지 않는다. 그래서 Codex 훅에서 `async`를 뺐다. 이전에 넣은 async 항목은 `init`을 다시 실행하면 같은 자리에서 동기 항목으로 바뀐다. 명령의 해시가 바뀌므로 `/hooks`에서 다시 신뢰해야 한다.
+- **1차: 이벤트가 오지 않았다.** 작업 하나를 끝까지 돌리는 동안 서버에 Codex 이벤트가 하나도 오지 않았고, `PIXEL_OFFICE_DEBUG=1`의 로그 파일도 생기지 않았다. 같은 파일의 Orca 훅(동기)은 실행됐다. 같은 명령을 `cmd.exe /C "..."`로 직접 실행하면 서버가 받았다(204).
+- **2차: 원인은 셸이었다.** async를 빼고 다시 신뢰하자 Codex 화면에 "Hook failed, exited with code 1"과 PowerShell 구문 오류(`UnexpectedToken`, `"…node.exe" "…hook.js" codex`)가 보였다. 즉 이 버전은 훅을 PowerShell로 실행한다(소스의 `cmd.exe` 기본값과 다름). 1차에서 이벤트가 없던 것도 같은 실패가 async라서 화면에 안 보였던 것으로 본다. "async가 실행되지 않는다"는 1차의 추정은 틀렸다.
+- **수정:** Windows 훅 명령을 래퍼 경로 하나로 바꿨다(8.3). 테스트는 래퍼를 `cmd.exe /C "..."`와 `powershell.exe -Command`로 실제 실행해 인자와 stdin이 그대로 전달되고 출력이 없는지 확인한다.

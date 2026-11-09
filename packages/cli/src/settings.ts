@@ -27,9 +27,14 @@ export interface HookTarget {
   hookPath: string;
   /** WSL only: the Windows `.pixel-office` folder as a `/mnt/<drive>/...` path. */
   pixelOfficeHome?: string;
-  /** Windows host: Codex runs hook commands with `cmd.exe /C`, elsewhere with `$SHELL -lc`. */
+  /** Windows host: the Codex hook goes through a `.cmd` wrapper (see `codexCommand`). */
   windows?: boolean;
+  /** Windows only: absolute path of the Codex wrapper, `<pixel-office home>\${CODEX_WRAPPER_NAME}`. */
+  codexWrapper?: string;
 }
+
+/** File name of the Windows wrapper that runs the Codex hook. */
+export const CODEX_WRAPPER_NAME = "pixel-office-codex-hook.cmd";
 
 export interface CommandHook {
   type: "command";
@@ -49,9 +54,8 @@ export class SettingsError extends Error {}
  */
 export function ourHook(target: HookTarget, agent: HookAgent = "claude"): CommandHook {
   if (agent === "codex") {
-    // Synchronous on purpose: codex-cli 0.167.0 on Windows never ran our async handlers in a
-    // real session, while synchronous ones in the same file did (DESIGN.md 8.6). The hook
-    // itself ends within 500 ms, so Codex waits at most that long per event.
+    // Synchronous: the only form seen working in a real Codex session so far (DESIGN.md 8.6).
+    // The hook itself ends within 500 ms, so Codex waits at most that long per event.
     return { type: "command", command: codexCommand(target), timeout: HOOK_TIMEOUT_S };
   }
   const run = [target.hookPath, "claude"];
@@ -67,27 +71,58 @@ export function ourHook(target: HookTarget, agent: HookAgent = "claude"): Comman
 }
 
 /**
- * Codex has no exec form: `command` is one string run by a shell. On Windows Codex runs
- * `cmd.exe /C "<command>"`; cmd drops the outer pair of quotes and runs
- * `"<node>" "<hook.js>" codex`. Double quotes keep spaces, but cmd still expands `%VAR%`
- * inside them, and a `"` cannot be quoted, so such paths are refused. Elsewhere the command
- * runs in `$SHELL -lc`; single quotes are literal in sh, bash, zsh and fish, and
- * `/usr/bin/env` sets the variable without relying on the shell's `VAR=value` syntax.
+ * Codex has no exec form: `command` is one string run by a shell, and on Windows that shell
+ * is not fixed. The source falls back to `cmd.exe /C`, but codex-cli 0.167.0 ran our hooks in
+ * PowerShell, where a line that starts with a quoted path is a string, not a command
+ * (DESIGN.md 8.6). So on Windows the command is the bare path of a `.cmd` wrapper, written
+ * with `/` and without spaces: cmd, PowerShell and Git Bash all run that the same way (Orca's
+ * own Codex hook works like this). The wrapper path must therefore have no spaces or shell
+ * characters; `init` refuses otherwise.
+ *
+ * Elsewhere the command runs in `$SHELL -lc`; single quotes are literal in sh, bash, zsh and
+ * fish, and `/usr/bin/env` sets the variable without relying on the shell's `VAR=value`.
  */
 export function codexCommand(target: HookTarget): string {
   if (target.windows === true) {
-    for (const path of [target.nodePath, target.hookPath]) {
-      if (/["%\r\n]/.test(path)) {
-        throw new SettingsError(`Codex 훅 명령에 쓸 수 없는 문자(", %, 줄바꿈)가 경로에 있습니다: ${path}`);
-      }
+    const wrapper = target.codexWrapper;
+    if (wrapper === undefined) {
+      throw new SettingsError("Codex 훅 래퍼 경로가 없습니다");
     }
-    return `"${target.nodePath}" "${target.hookPath}" codex`;
+    const command = wrapper.replace(/\\/g, "/");
+    // `~` appears in 8.3 short names such as C:/Users/RUNNER~1; it is literal mid-word
+    if (!/^[A-Za-z]:\/[A-Za-z0-9._~\/-]+$/.test(command)) {
+      throw new SettingsError(
+        `Codex 훅 래퍼 경로에 공백이나 특수 문자가 있어 셸 없이 실행할 수 없습니다: ${wrapper}\n` +
+          "PIXEL_OFFICE_HOME을 공백 없는 폴더(예: C:\\pixel-office)로 지정하고 다시 실행하세요.",
+      );
+    }
+    return command;
   }
   const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
   const run = `${quote(target.nodePath)} ${quote(target.hookPath)} codex`;
   return target.pixelOfficeHome === undefined
     ? run
     : `/usr/bin/env ${quote(`PIXEL_OFFICE_HOME=${target.pixelOfficeHome}`)} ${run}`;
+}
+
+/**
+ * The Windows wrapper's text (CRLF). `@echo off` keeps cmd from echoing the command, which
+ * Codex would add to the model's context on UserPromptSubmit; the wrapper always exits 0.
+ * Inside a `.cmd` file `%` starts a variable, so paths with `%` or `"` are refused.
+ */
+export function codexWrapperScript(target: HookTarget): string {
+  for (const path of [target.nodePath, target.hookPath]) {
+    if (/["%\r\n]/.test(path)) {
+      throw new SettingsError(`Codex 훅 래퍼에 쓸 수 없는 문자(", %, 줄바꿈)가 경로에 있습니다: ${path}`);
+    }
+  }
+  return [
+    "@echo off",
+    "rem Pixel Office: runs the Codex hook. Written by `pixel-office init`, removed by `uninit`.",
+    `"${target.nodePath}" "${target.hookPath}" codex`,
+    "exit /b 0",
+    "",
+  ].join("\r\n");
 }
 
 const HOOK_SUFFIX = "/cli/dist/src/hook.js";
@@ -114,7 +149,8 @@ export function isOurHook(handler: unknown, agent: HookAgent = "claude"): boolea
 
 const COMMAND_PATTERN: Record<HookAgent, RegExp> = {
   claude: /cli[\\/]+dist[\\/]+src[\\/]+hook\.js["']?\s+["']?claude(["'\s]|$)/,
-  codex: /cli[\\/]+dist[\\/]+src[\\/]+hook\.js["']?\s+["']?codex(["'\s]|$)/,
+  // the wrapper (Windows), or node plus hook.js (elsewhere, and older Windows entries)
+  codex: /pixel-office-codex-hook\.cmd["']?\s*$|cli[\\/]+dist[\\/]+src[\\/]+hook\.js["']?\s+["']?codex(["'\s]|$)/,
 };
 
 interface Format {

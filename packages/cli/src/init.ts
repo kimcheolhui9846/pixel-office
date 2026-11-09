@@ -34,11 +34,19 @@ import { unifiedDiff } from "./diff.js";
 import {
   addOurHooks,
   type Change,
+  CODEX_WRAPPER_NAME,
+  codexCommand,
+  codexWrapperScript,
   type HookAgent,
   type HookTarget,
   removeOurHooks,
   SettingsError,
 } from "./settings.js";
+
+/** Where the Windows Codex wrapper lives: next to server.json and the backups. */
+function codexWrapperPath(io: InitIo): string {
+  return join(pixelOfficeHome(io.env, io.homedir()), CODEX_WRAPPER_NAME);
+}
 
 export const EXIT_NEEDS_CONFIRMATION = 64;
 
@@ -164,6 +172,7 @@ function resolveTarget(options: InitOptions, io: InitIo): HookTarget {
   const target: HookTarget = { nodePath: io.nodePath, hookPath: io.hookPath };
   if ((io.platform ?? process.platform) === "win32") {
     target.windows = true;
+    target.codexWrapper = codexWrapperPath(io);
   }
   if (!io.isWsl()) {
     if (options.windowsHome !== undefined) {
@@ -339,6 +348,29 @@ async function runOne(
   const settingsPath = spec.path;
   try {
     io.out(`${spec.label}: ${settingsPath}`);
+
+    // Windows Codex wrapper: written on init, removed on uninit. Its text holds the node and
+    // hook.js paths, so a moved repo changes only the wrapper, not the trusted hook command.
+    const wrapperPath = codexWrapperPath(io);
+    const wrapperBefore = spec.agent === "codex" ? readSettings(wrapperPath) : null;
+    let wrapperAfter: string | null = wrapperBefore;
+    if (spec.agent === "codex") {
+      if (target?.windows === true) {
+        try {
+          codexCommand(target);
+          wrapperAfter = codexWrapperScript(target);
+        } catch (error) {
+          if (error instanceof SettingsError) {
+            throw new InitFailure(`${error.message}\n파일을 바꾸지 않았습니다.`);
+          }
+          throw error;
+        }
+      } else if (target === undefined) {
+        wrapperAfter = null;
+      }
+    }
+    const wrapperChanged = wrapperAfter !== wrapperBefore;
+
     const before = readSettings(settingsPath);
     let change: Change;
     try {
@@ -350,7 +382,7 @@ async function runOne(
       throw error;
     }
 
-    if (!change.changed) {
+    if (!change.changed && !wrapperChanged) {
       io.out(
         mode === "init"
           ? "바꿀 것이 없습니다. Pixel Office 훅이 이미 들어 있습니다."
@@ -358,12 +390,31 @@ async function runOne(
       );
       return 0;
     }
-    if (before === null) {
-      io.out("설정 파일이 없어서 Pixel Office 훅만 담은 새 파일을 만듭니다.");
+    if (change.changed) {
+      if (before === null) {
+        io.out("설정 파일이 없어서 Pixel Office 훅만 담은 새 파일을 만듭니다.");
+      }
+      io.out("");
+      io.out(unifiedDiff(before ?? "", change.after, `${settingsPath} (현재)`, `${settingsPath} (적용 후)`).trimEnd());
+      io.out("");
     }
-    io.out("");
-    io.out(unifiedDiff(before ?? "", change.after, `${settingsPath} (현재)`, `${settingsPath} (적용 후)`).trimEnd());
-    io.out("");
+    if (wrapperChanged) {
+      io.out(
+        wrapperAfter === null
+          ? `Codex 훅 래퍼를 지웁니다: ${wrapperPath}`
+          : `Codex 훅 래퍼(${wrapperBefore === null ? "새 파일" : "내용 변경"}): ${wrapperPath}`,
+      );
+      io.out("");
+      io.out(
+        unifiedDiff(
+          (wrapperBefore ?? "").replace(/\r\n/g, "\n"),
+          (wrapperAfter ?? "").replace(/\r\n/g, "\n"),
+          `${wrapperPath} (현재)`,
+          `${wrapperPath} (적용 후)`,
+        ).trimEnd(),
+      );
+      io.out("");
+    }
 
     if (options.dryRun) {
       io.out("--dry-run: 파일을 바꾸지 않았습니다.");
@@ -385,12 +436,24 @@ async function runOne(
     if (readSettings(settingsPath) !== before) {
       throw new InitFailure("확인하는 동안 설정 파일이 바뀌었습니다. 다시 실행하세요. 파일을 바꾸지 않았습니다.");
     }
-    const poHome = pixelOfficeHome(io.env, io.homedir());
-    const backupPath = before === null ? null : backup(settingsPath, poHome, io.now(), spec.backupName, folder);
-    writeAtomic(settingsPath, change.after);
-    io.out(`적용했습니다: ${settingsPath}`);
-    io.out(backupPath === null ? "원래 파일이 없어서 백업하지 않았습니다." : `원래 파일 백업: ${backupPath}`);
-    if (mode === "init") {
+    // on init the wrapper goes first, so the hook never points at a missing file; on uninit
+    // the hooks go first, for the same reason
+    if (wrapperChanged && wrapperAfter !== null) {
+      writeAtomic(wrapperPath, wrapperAfter);
+      io.out(`Codex 훅 래퍼를 썼습니다: ${wrapperPath}`);
+    }
+    if (change.changed) {
+      const poHome = pixelOfficeHome(io.env, io.homedir());
+      const backupPath = before === null ? null : backup(settingsPath, poHome, io.now(), spec.backupName, folder);
+      writeAtomic(settingsPath, change.after);
+      io.out(`적용했습니다: ${settingsPath}`);
+      io.out(backupPath === null ? "원래 파일이 없어서 백업하지 않았습니다." : `원래 파일 백업: ${backupPath}`);
+    }
+    if (wrapperChanged && wrapperAfter === null) {
+      rmSync(wrapperPath, { force: true });
+      io.out(`Codex 훅 래퍼를 지웠습니다: ${wrapperPath}`);
+    }
+    if (mode === "init" && change.changed) {
       for (const line of AFTER_APPLY[spec.agent]) {
         io.out(line);
       }
