@@ -5,11 +5,10 @@
  *   pixel-office start [--port N]                   run the server in the foreground
  *   pixel-office url [folder]                       print the office address for one working folder
  *   pixel-office orca-open                          open this Orca worktree's office tab (run by the hooks)
- *   pixel-office orca-open                            Orca 터미널에서: 이 worktree의 사무실 탭을 Orca 브라우저에 엽니다
-                                                    (에이전트 훅이 자동으로 실행, 서버가 없으면 띄움)
-  pixel-office simulate [--loops N] [--speed X]   post the demo events to a running server
+ *   pixel-office simulate [--loops N] [--speed X]   post the demo events to a running server
  *   pixel-office init [--agent A] [--dry-run] [--yes] [--windows-home P]   add our hooks
  *   pixel-office uninit [--agent A] [--dry-run] [--yes]   remove them again
+ *   pixel-office doctor [--windows-home P]          check the build, the server and the hooks (reads only)
  *
  * Messages for the user are Korean; code comments are English.
  */
@@ -31,6 +30,7 @@ import {
   TOKEN_HEADER,
 } from "@pixel-office/core/server";
 
+import { formatChecks, runDoctor } from "./doctor.js";
 import { defaultIo, runInit } from "./init.js";
 import { openOfficeTab, orcaCommand, orcaWorktree, runOrca } from "./orca.js";
 
@@ -44,10 +44,14 @@ const USAGE = `사용법:
       --agent <claude|codex|both>                   대상 에이전트 (기본 both, Codex 폴더가 없으면 Codex는 건너뜀)
       --windows-home <경로>                         WSL에서: Windows 사용자 폴더 (예: /mnt/c/Users/이름)
   pixel-office uninit [--dry-run] [--yes]           init이 넣은 훅만 지웁니다 (--agent도 씀)
+  pixel-office doctor [--windows-home <경로>]       빌드, 서버, 훅 상태를 점검합니다 (아무것도 고치지 않음)
+  pixel-office orca-open                            Orca 터미널에서: 이 worktree의 사무실 탭을 Orca 브라우저에 엽니다
+                                                    (에이전트 훅이 자동으로 실행, 서버가 없으면 띄움)
 
 환경 변수:
   PIXEL_OFFICE_HOME   server.json과 백업을 둘 폴더 (기본 ~/.pixel-office)
   CLAUDE_CONFIG_DIR   Claude Code 설정 폴더 (기본 ~/.claude)
+  CODEX_HOME          Codex 설정 폴더 (기본 ~/.codex)
   PIXEL_OFFICE_ORCA_OPEN=0   Orca에서 사무실 탭을 자동으로 열지 않습니다`;
 
 const NO_SERVER = "실행 중인 Pixel Office 서버가 없습니다. 먼저 `pixel-office start`를 실행하세요.";
@@ -83,6 +87,8 @@ async function main(argv: string[]): Promise<number> {
     case "init":
     case "uninit":
       return init(command, rest);
+    case "doctor":
+      return doctor(rest);
     case undefined:
     case "help":
     case "--help":
@@ -312,6 +318,22 @@ async function init(mode: "init" | "uninit", args: string[]): Promise<number> {
     },
     defaultIo(hookPath),
   );
+}
+
+/** Read-only check of the build, the server and the hooks. Exit 1 when something is broken. */
+async function doctor(args: string[]): Promise<number> {
+  const { values } = parseArgs({ args, options: { "windows-home": { type: "string" } }, strict: true });
+  const hookPath = join(dirname(fileURLToPath(import.meta.url)), "hook.js");
+  const checks = await runDoctor(values["windows-home"] !== undefined ? { windowsHome: values["windows-home"] } : {}, {
+    ...defaultIo(hookPath),
+    cwd: process.cwd(),
+    nodeVersion: process.version,
+    uiBuilt: uiDir() !== undefined,
+    health: (port) => health({ port } as ServerInfo),
+  });
+  const { text, code } = formatChecks(checks);
+  console.log(text);
+  return code;
 }
 
 main(process.argv.slice(2)).then(

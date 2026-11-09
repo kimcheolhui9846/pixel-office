@@ -44,7 +44,7 @@ import {
 } from "./settings.js";
 
 /** Where the Windows Codex wrapper lives: next to server.json and the backups. */
-function codexWrapperPath(io: InitIo): string {
+export function codexWrapperPath(io: InitIo): string {
   return join(pixelOfficeHome(io.env, io.homedir()), CODEX_WRAPPER_NAME);
 }
 
@@ -98,7 +98,7 @@ export function codexHooksPath(env: NodeJS.ProcessEnv, home: string): string {
   return join(codexHome(env, home), "hooks.json");
 }
 
-function pixelOfficeHome(env: NodeJS.ProcessEnv, home: string): string {
+export function pixelOfficeHome(env: NodeJS.ProcessEnv, home: string): string {
   const override = env.PIXEL_OFFICE_HOME;
   return override && override.trim() !== "" ? override : join(home, ".pixel-office");
 }
@@ -163,9 +163,9 @@ export function defaultIo(hookPath: string): InitIo {
   };
 }
 
-class InitFailure extends Error {}
+export class InitFailure extends Error {}
 
-function resolveTarget(options: InitOptions, io: InitIo): HookTarget {
+export function resolveTarget(options: InitOptions, io: InitIo): HookTarget {
   if (!existsSync(io.hookPath)) {
     throw new InitFailure(`훅 파일이 없습니다: ${io.hookPath}\n먼저 \`npm run build\`를 실행하세요.`);
   }

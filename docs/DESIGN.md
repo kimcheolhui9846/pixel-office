@@ -560,3 +560,27 @@ codex-cli 0.167.0 기준. "문서"는 Codex hooks 문서(developers.openai.com/c
 - **서버:** `zone`(다섯 값 중 하나), `subagentId`(1~200자), `role`(40자 이하)만 받고, 제어 문자는 거절한다.
 - **Codex:** 같은 규칙으로 구역을 보낸다. Codex의 서브에이전트 신호는 확인하지 못해서 다루지 않는다. Codex의 `apply_patch`, `update_plan` 같은 도구 이름은 문서를 보고 넣었고, 실제 Codex 훅에서 확인한 이름은 `Bash`뿐이다.
 - **실제 확인 (2026-11-09):** 새 서버에서 `?workspace=D:/aaa`를 열고 이 개발 세션(Claude Code)이 Explore 서브에이전트를 띄웠다. 본 세션은 기획(서브에이전트에게 일을 넘김), 서브에이전트는 `Explore` 이름표를 달고 검토 구역에 나타났고 끝나자 만세했다. 캡처: `screenshots/step9c-live-subagent.png`. `init`으로 `SubagentStart`, `SubagentStop` 훅을 사용자 Claude 설정에 더했다(사용자 승인, 백업 있음).
+
+## 14. 설치 점검과 README (10단계)
+
+### 14.1 `pixel-office doctor` (`packages/cli/src/doctor.ts`)
+
+프롬프트 7절의 CLI 목록에 있던 명령이다. 새 PC에 설치한 뒤나 업데이트한 뒤 무엇을 더 해야 하는지 알려 준다. 읽기만 하고, 파일을 쓰거나 서버를 띄우지 않으며, 토큰을 출력하지 않는다. 홈 폴더는 `~`로 줄여 보여 준다.
+
+| 점검 | 정상 | 주의 / 문제 |
+|---|---|---|
+| Node.js | 20 이상 | 20 미만은 문제 |
+| 화면 파일 | `packages/ui/dist/web/index.html` 있음 | 없으면 문제(`npm run build`) |
+| 서버 | `server.json`의 포트가 `/health`에 응답 | 기록만 있고 응답이 없으면 주의, 꺼져 있으면 참고 |
+| Claude Code 훅, Codex 훅 | 이벤트마다 `init`이 지금 쓸 그룹이 그대로 있음 | 하나도 없으면 문제, 옛 경로이거나 빠진 이벤트가 있으면 주의(빠진 이벤트 이름을 보여 줌) |
+| Codex 래퍼(Windows) | 내용이 지금 빌드로 만든 것과 같음 | 없거나 다르면 주의 |
+| Codex 신뢰, 작업 폴더 주소, Orca 여부 | 참고로만 보여 줌 | |
+
+- 훅 비교는 텍스트가 아니라 파싱한 그룹으로 한다(`settings.ts`의 `hookStatus`). 사람이 줄 바꿈을 바꾼 파일도 정상으로 본다.
+- 종료 코드는 문제가 하나라도 있으면 1, 아니면 0이다. 주의만 있으면 0이다.
+- Orca 터미널 안(`ORCA_WORKTREE_ID`가 있음)에서는 Orca가 정한 `CLAUDE_CONFIG_DIR`, `CODEX_HOME`을 따라가므로 Orca의 설정 사본을 점검한다. 이때 고치는 방법은 "Orca 밖에서 init, 그다음 Orca 재시작"으로 안내한다. Orca 안에서 init을 하면 다음 시작 때 덮어써지기 때문이다.
+- **실제 확인 (2026-11-09):** 이 PC의 사용자 설정에서는 모두 정상이었다(Claude 이벤트 9개, Codex 이벤트 6개, 래퍼). Orca의 설정 사본(`%APPDATA%\orca\claude-profiles\<id>\home`, `codex-accounts\<id>\home`)을 같은 방법으로 점검하니 Claude 쪽에 `SubagentStart`, `SubagentStop`이 빠져 있었다. 9c단계의 init 뒤에 Orca를 다시 시작하지 않았기 때문이고, 11절의 설명과 맞다.
+
+### 14.2 README
+
+설치(새 PC), VS Code, Orca, 브라우저, 명령, 업데이트, 한계(훅 신호로 정하는 것과 추정하는 것), 완료 기준 점검, CPU, 보안을 README 한 곳에 모았다. 근거는 이 문서의 각 절과 `screenshots/`를 가리킨다.

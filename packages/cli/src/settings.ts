@@ -231,6 +231,36 @@ function isOurGroup(group: unknown, wanted: Json): boolean {
   return JSON.stringify(group) === JSON.stringify(wanted);
 }
 
+export interface HookStatus {
+  /** Events our hook should be in. */
+  total: number;
+  /** Events that hold exactly the group `init` would write now. */
+  current: number;
+  /** Events without any hook of ours. */
+  missing: string[];
+}
+
+/**
+ * How far the settings match what `init` would write, for `doctor`. Compares the parsed
+ * groups, not the text, so a reformatted file still counts as current.
+ * Throws SettingsError when the file is not usable.
+ */
+export function hookStatus(text: string | null, target: HookTarget, agent: HookAgent = "claude"): HookStatus {
+  const { data } = parse(text);
+  const wanted: Json = { hooks: [ourHook(target, agent)] };
+  const hooks = (data.hooks as Json | undefined) ?? {};
+  const status: HookStatus = { total: EVENTS[agent].length, current: 0, missing: [] };
+  for (const event of EVENTS[agent]) {
+    const groups = (hooks[event] as unknown[] | undefined) ?? [];
+    if (groups.some((group) => isOurGroup(group, wanted))) {
+      status.current += 1;
+    } else if (!groups.some((group) => withoutOurs(group, agent).removed > 0)) {
+      status.missing.push(event);
+    }
+  }
+  return status;
+}
+
 export interface Change {
   before: string | null;
   after: string;
