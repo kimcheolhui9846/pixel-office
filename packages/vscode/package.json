@@ -1,0 +1,51 @@
+{
+  "name": "pixel-office-vscode",
+  "displayName": "Pixel Office",
+  "description": "이 작업 폴더에서 일하는 Codex와 Claude Code를 픽셀 사무실로 보여 줍니다",
+  "version": "0.0.1",
+  "publisher": "kimcheolhui9846",
+  "private": true,
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "./dist/src/extension.js",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "pixelOffice.open",
+        "title": "사무실 열기",
+        "category": "Pixel Office"
+      }
+    ],
+    "configuration": {
+      "title": "Pixel Office",
+      "properties": {
+        "pixelOffice.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "VS Code 창을 열면 첫 작업 폴더의 사무실을 옆 탭에 자동으로 엽니다."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "@pixel-office/cli": "0.0.0",
+    "@pixel-office/core": "0.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json && node ../../scripts/test.mjs dist/test"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.90.0"
+  }
+}
